@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Camera, ArrowLeft, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -17,12 +17,23 @@ const THEMES = [
   { id: 'memory', name: 'Memory', icon: '📝', desc: 'With date, message & stickers', frame: 'bg-amber-50 border border-amber-200', accent: 'from-amber-300 to-orange-200' },
 ] as const
 
+const LAYOUTS = [
+  { id: 'classic' as StripLayout, name: 'Classic 4-Strip' },
+  { id: 'magazine' as StripLayout, name: 'Magazine' },
+  { id: 'couple' as StripLayout, name: 'Couple Split' },
+  { id: 'memory' as StripLayout, name: 'Memory Card' },
+]
+
 /** Mini photo-strip mockup for theme previews */
 function ThemeStripPreview({ frame, accent }: { frame: string; accent: string }) {
   return (
     <div className={`w-10 rounded-md p-1 flex flex-col gap-1 shadow-sm ${frame}`}>
       {[0, 1, 2].map((i) => (
-        <div key={i} className={`h-5 rounded-[3px] bg-gradient-to-br ${accent}`} style={{ opacity: 0.9 - i * 0.12 }} />
+        <div
+          key={i}
+          className={`h-5 rounded-[3px] bg-gradient-to-br ${accent}`}
+          style={{ opacity: 0.9 - i * 0.12 }}
+        />
       ))}
       <div className="h-1.5" />
     </div>
@@ -49,7 +60,7 @@ function LayoutPreview({ id }: { id: StripLayout }) {
   const cell = 'rounded-[2px] bg-primary/25'
   if (id === 'classic') return (
     <div className="w-8 mx-auto flex flex-col gap-0.5 p-1 rounded bg-muted">
-      {[0,1,2,3].map(i => <div key={i} className={`h-3 ${cell}`} />)}
+      {[0, 1, 2, 3].map(i => <div key={i} className={`h-3 ${cell}`} />)}
     </div>
   )
   if (id === 'magazine') return (
@@ -62,7 +73,7 @@ function LayoutPreview({ id }: { id: StripLayout }) {
   )
   if (id === 'couple') return (
     <div className="w-14 mx-auto grid grid-cols-2 gap-0.5 p-1 rounded bg-muted">
-      {[0,1,2,3].map(i => <div key={i} className={`h-4 ${cell}`} />)}
+      {[0, 1, 2, 3].map(i => <div key={i} className={`h-4 ${cell}`} />)}
     </div>
   )
   return (
@@ -74,16 +85,9 @@ function LayoutPreview({ id }: { id: StripLayout }) {
   )
 }
 
-const LAYOUTS = [
-  { id: 'classic' as StripLayout, name: 'Classic 4-Strip', icon: '⋮' },
-  { id: 'magazine' as StripLayout, name: 'Magazine', icon: '◧' },
-  { id: 'couple' as StripLayout, name: 'Couple Split', icon: '__,__' },
-  { id: 'memory' as StripLayout, name: 'Memory Card', icon: '🔳' },
-]
-
 export default function CreateRoomView() {
   const {
-    username, userId, setUserId,
+    username, setUserId,
     setView, setRoomCode, setIsCreator, setSessionId,
     selectedFilter, setSelectedFilter,
     stripLayout, setStripLayout,
@@ -94,76 +98,70 @@ export default function CreateRoomView() {
   const [isCreating, setIsCreating] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState('classic')
 
-  const handleCreate = async () => {
+  // Socket-first: the live socket server is the source of truth, so the room
+  // opens instantly. The Supabase record is written in the background and
+  // never blocks the UI.
+  const handleCreate = () => {
     if (!username.trim()) return
     setIsCreating(true)
 
-    try {
-      // Create room via API
-      const res = await fetch('/api/rooms', {
+    const socket = getSocket()
+
+    const onRoomCreated = (roomData: any) => {
+      setRoomCode(roomData.code)
+      setRoomState(roomData)
+      setParticipants(roomData.participants || [])
+      setIsCreator(true)
+      setIsCreating(false)
+      setView('lobby')
+      socket.off('room-created', onRoomCreated)
+      socket.off('error', onSocketError)
+
+      // Persist to DB in the background.
+      fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: username.trim(),
           theme: selectedTheme,
           filter: selectedFilter,
+          code: roomData.code,
         }),
       })
-      const data = await res.json()
-
-      if (!res.ok) {
-        toast.error(data.error || 'Failed to create room')
-        setIsCreating(false)
-        return
-      }
-
-      setUserId(data.user.id)
-      setSessionId(data.session.id)
-      setIsCreator(true)
-
-      // Reuse the single shared socket connection and register the room
-      // under the SAME code the database already generated, so the code
-      // shown to the creator always matches the code partners can join.
-      const socket = getSocket()
-
-      const onRoomCreated = (roomData: any) => {
-        setRoomCode(roomData.code)
-        setRoomState(roomData)
-        setParticipants(roomData.participants || [])
-        setIsCreating(false)
-        setView('lobby')
-        socket.off('room-created', onRoomCreated)
-        socket.off('error', onSocketError)
-      }
-      const onSocketError = (err: any) => {
-        toast.error(err.message || 'Connection error')
-        setIsCreating(false)
-        socket.off('room-created', onRoomCreated)
-        socket.off('error', onSocketError)
-      }
-
-      socket.on('room-created', onRoomCreated)
-      socket.on('error', onSocketError)
-
-      const emitCreateRoom = () => {
-        socket.emit('create-room', {
-          username: username.trim(),
-          theme: selectedTheme,
-          filter: selectedFilter,
-          totalPhotos,
-          code: data.session.roomCode,
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (data) {
+            setUserId(data.user.id)
+            setSessionId(data.session.id)
+          }
         })
-      }
+        .catch(() => { /* live room still works; can retry saving later */ })
+    }
 
-      if (socket.connected) {
-        emitCreateRoom()
-      } else {
-        socket.once('connect', emitCreateRoom)
-        socket.connect()
-      }
-    } catch {
-      toast.error('Failed to create room')
+    const onSocketError = (err: any) => {
+      toast.error(err.message || 'Connection error')
       setIsCreating(false)
+      socket.off('room-created', onRoomCreated)
+      socket.off('error', onSocketError)
+    }
+
+    socket.on('room-created', onRoomCreated)
+    socket.on('error', onSocketError)
+
+    const emitCreateRoom = () => {
+      socket.emit('create-room', {
+        username: username.trim(),
+        theme: selectedTheme,
+        filter: selectedFilter,
+        totalPhotos,
+      })
+    }
+
+    if (socket.connected) {
+      emitCreateRoom()
+    } else {
+      socket.once('connect', emitCreateRoom)
+      socket.connect()
     }
   }
 

@@ -7,13 +7,14 @@ import { ArrowLeft, LogIn, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
+import { getSocket } from '@/lib/socket'
 
 export default function JoinRoomView() {
   const { username, userId, setUserId, setView, setRoomCode, setIsCreator, setSessionId, setRoomState, setParticipants } = useAppStore()
   const [code, setCode] = useState('')
   const [isJoining, setIsJoining] = useState(false)
 
-  const handleJoin = async () => {
+  const handleJoin = () => {
     if (!code.trim() || !username.trim()) return
     if (code.trim().length !== 6) {
       toast.error('Room code must be 6 characters')
@@ -21,79 +22,53 @@ export default function JoinRoomView() {
     }
 
     setIsJoining(true)
+    const roomCodeUp = code.trim().toUpperCase()
 
-    try {
-      const res = await fetch('/api/rooms/join', {
+    const socket = getSocket()
+
+    const onRoomJoined = (roomData: any) => {
+      setIsCreator(false)
+      setRoomCode(roomData.code || roomCodeUp)
+      setRoomState(roomData)
+      setParticipants(roomData.participants || [])
+      setIsJoining(false)
+      setView('lobby')
+      socket.off('room-joined', onRoomJoined)
+      socket.off('error', onSocketError)
+
+      // Register the user in the DB in the background — never blocks joining.
+      fetch('/api/rooms/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: code.trim(),
-          username: username.trim(),
-        }),
+        body: JSON.stringify({ code: roomCodeUp, username: username.trim() }),
       })
-      const data = await res.json()
-
-      if (!res.ok) {
-        toast.error(data.error || 'Room not found')
-        setIsJoining(false)
-        return
-      }
-
-      setUserId(data.user.id)
-      setSessionId(data.session.id)
-      setIsCreator(false)
-      setRoomCode(data.session.roomCode)
-      setRoomState({
-        code: data.session.roomCode,
-        creatorId: data.session.creatorId,
-        creatorName: data.session.creator?.username || 'Host',
-        theme: data.session.theme,
-        filter: data.session.filter,
-        status: data.session.status,
-        participants: [],
-        photoCount: 0,
-        totalPhotos: 4,
-        currentPhoto: 0,
-      })
-
-      // Reuse the single shared socket connection.
-      const { getSocket } = await import('@/lib/socket')
-      const socket = getSocket()
-
-      const onRoomJoined = (roomData: any) => {
-        setRoomState(roomData)
-        setParticipants(roomData.participants || [])
-        setIsJoining(false)
-        setView('lobby')
-        socket.off('room-joined', onRoomJoined)
-        socket.off('error', onSocketError)
-      }
-      const onSocketError = (err: any) => {
-        toast.error(err.message || 'Failed to join room')
-        setIsJoining(false)
-        socket.off('room-joined', onRoomJoined)
-        socket.off('error', onSocketError)
-      }
-
-      socket.on('room-joined', onRoomJoined)
-      socket.on('error', onSocketError)
-
-      const emitJoinRoom = () => {
-        socket.emit('join-room', {
-          code: code.trim().toUpperCase(),
-          username: username.trim(),
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => {
+          if (data) {
+            setUserId(data.user.id)
+            setSessionId(data.session.id)
+          }
         })
-      }
+        .catch(() => { /* non-fatal */ })
+    }
 
-      if (socket.connected) {
-        emitJoinRoom()
-      } else {
-        socket.once('connect', emitJoinRoom)
-        socket.connect()
-      }
-    } catch {
-      toast.error('Failed to join room')
+    const onSocketError = (err: any) => {
+      toast.error(err.message || 'Failed to join room')
       setIsJoining(false)
+      socket.off('room-joined', onRoomJoined)
+      socket.off('error', onSocketError)
+    }
+
+    socket.on('room-joined', onRoomJoined)
+    socket.on('error', onSocketError)
+
+    const emitJoin = () => socket.emit('join-room', { code: roomCodeUp, username: username.trim() })
+
+    if (socket.connected) {
+      emitJoin()
+    } else {
+      socket.once('connect', emitJoin)
+      socket.connect()
     }
   }
 

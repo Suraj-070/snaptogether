@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { username, theme = 'classic', filter = 'none' } = body
+    const { username, theme = 'classic', filter = 'none', code: providedCode } = body
 
     if (!username || username.trim().length === 0) {
       return NextResponse.json({ error: 'Username is required' }, { status: 400 })
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       try {
         session = await db.photoSession.create({
           data: {
-            roomCode: genCode(),
+            roomCode: attempt === 0 && providedCode ? String(providedCode).toUpperCase() : genCode(),
             creatorId: user.id,
             theme,
             filter,
