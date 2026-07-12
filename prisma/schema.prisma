@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -39,7 +40,7 @@ model Photo {
   id        String   @id @default(cuid())
   sessionId String
   uploaderId String
-  imageData  String   // base64 encoded
+  imageData  String   // Supabase Storage public URL (was base64, see /api/photos)
   filter    String   @default("none")
   order     Int
   createdAt DateTime @default(now())
@@ -50,7 +51,7 @@ model Photo {
 model Memory {
   id           String   @id @default(cuid())
   sessionId    String
-  stripData    String?  // base64 encoded final strip
+  stripData    String?  // Supabase Storage public URL (was base64, see /api/memories)
   caption      String?
   isFavorite   Boolean  @default(false)
   createdAt    DateTime @default(now())

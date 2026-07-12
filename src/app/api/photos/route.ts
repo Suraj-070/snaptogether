@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { uploadDataUrl } from '@/lib/storage'
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,11 +11,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    // imageData arrives as a base64 data URL from the canvas capture.
+    // Upload it to Supabase Storage and store the resulting URL instead
+    // of the raw base64 (keeps the DB small and fast).
+    const imageUrl = await uploadDataUrl(imageData, 'photos')
+
     const photo = await db.photo.create({
       data: {
         sessionId,
         uploaderId,
-        imageData,
+        imageData: imageUrl,
         filter: filter || 'none',
         order: order || 0,
       },

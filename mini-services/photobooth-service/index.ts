@@ -62,9 +62,16 @@ function getRoomInfo(room: Room) {
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`)
 
-  socket.on('create-room', (data: { username: string; theme?: string; filter?: string }) => {
-    let code = generateRoomCode()
-    while (rooms.has(code)) code = generateRoomCode()
+  socket.on('create-room', (data: { username: string; theme?: string; filter?: string; code?: string }) => {
+    let code = data.code ? data.code.toUpperCase().trim() : generateRoomCode()
+    while (rooms.has(code)) {
+      if (data.code) {
+        // requested code is taken (rare) — fall back to a fresh one
+        code = generateRoomCode()
+      } else {
+        code = generateRoomCode()
+      }
+    }
 
     const participant: Participant = {
       id: socket.id,

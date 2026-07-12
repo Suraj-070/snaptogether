@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { uploadDataUrl } from '@/lib/storage'
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,11 +11,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    // stripData arrives as a base64 data URL. Upload it to Supabase
+    // Storage and store the URL instead of the raw base64.
+    const stripUrl = stripData ? await uploadDataUrl(stripData, 'strips') : null
+
     const memory = await db.memory.create({
       data: {
         sessionId,
         userId,
-        stripData: stripData || null,
+        stripData: stripUrl,
         caption: caption || null,
         isFavorite: isFavorite || false,
       },

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Camera, ArrowLeft, Copy, Check, Sparkles, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { io, Socket } from 'socket.io-client'
+import { getSocket } from '@/lib/socket'
 import type { FilterId, StripLayout } from '@/lib/types'
 import { FILTERS } from '@/lib/types'
 
@@ -65,32 +65,45 @@ export default function CreateRoomView() {
       setSessionId(data.session.id)
       setIsCreator(true)
 
-      // Connect to WebSocket and create room
-      const socket: Socket = io('/?XTransformPort=3004', {
-        transports: ['websocket', 'polling'],
-        forceNew: true,
-      })
+      // Reuse the single shared socket connection and register the room
+      // under the SAME code the database already generated, so the code
+      // shown to the creator always matches the code partners can join.
+      const socket = getSocket()
 
-      socket.on('connect', () => {
-        socket.emit('create-room', {
-          username: username.trim(),
-          theme: selectedTheme,
-          filter: selectedFilter,
-        })
-      })
-
-      socket.on('room-created', (roomData: any) => {
+      const onRoomCreated = (roomData: any) => {
         setRoomCode(roomData.code)
         setRoomState(roomData)
         setParticipants(roomData.participants || [])
         setIsCreating(false)
         setView('studio')
-      })
-
-      socket.on('error', (err: any) => {
+        socket.off('room-created', onRoomCreated)
+        socket.off('error', onSocketError)
+      }
+      const onSocketError = (err: any) => {
         toast.error(err.message || 'Connection error')
         setIsCreating(false)
-      })
+        socket.off('room-created', onRoomCreated)
+        socket.off('error', onSocketError)
+      }
+
+      socket.on('room-created', onRoomCreated)
+      socket.on('error', onSocketError)
+
+      const emitCreateRoom = () => {
+        socket.emit('create-room', {
+          username: username.trim(),
+          theme: selectedTheme,
+          filter: selectedFilter,
+          code: data.session.roomCode,
+        })
+      }
+
+      if (socket.connected) {
+        emitCreateRoom()
+      } else {
+        socket.once('connect', emitCreateRoom)
+        socket.connect()
+      }
     } catch {
       toast.error('Failed to create room')
       setIsCreating(false)

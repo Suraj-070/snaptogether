@@ -6,11 +6,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Camera, ArrowLeft, Sparkles, Send, Check, Settings2,
   ChevronLeft, ChevronRight, Download, Heart, Loader2,
-  ThumbsUp, PartyPopper, Star, Zap, X, Info,
+  ThumbsUp, PartyPopper, Star, Zap, X, Info, FlipHorizontal2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { io, Socket } from 'socket.io-client'
+import type { Socket } from 'socket.io-client'
+import { getSocket, disconnectSocket } from '@/lib/socket'
 import type { FilterId, CapturedPhoto, Participant, RoomState } from '@/lib/types'
 import { FILTERS, getFilterCss } from '@/lib/types'
 import type { StripLayout } from '@/lib/types'
@@ -53,18 +54,29 @@ export default function StudioView() {
   useEffect(() => {
     if (!roomCode || !username) return
 
-    const socket: Socket = io('/?XTransformPort=3004', {
-      transports: ['websocket', 'polling'],
-      forceNew: true,
-    })
+    const socket: Socket = getSocket()
 
-    socket.on('connect', () => {
+    const joinOrCreate = () => {
+      // If this socket already has an active room (it was created/joined
+      // in the Create Room / Join Room screen right before navigating
+      // here), don't create or join again — that would spin up a second,
+      // disconnected room on the server and orphan the one everyone
+      // already has the code for.
+      if (roomState?.code === roomCode) return
+
       if (isCreator) {
-        socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter })
+        socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: roomCode })
       } else {
         socket.emit('join-room', { code: roomCode, username })
       }
-    })
+    }
+
+    if (socket.connected) {
+      joinOrCreate()
+    } else {
+      socket.once('connect', joinOrCreate)
+      socket.connect()
+    }
 
     socket.on('room-created', (data: any) => {
       setRoomState({ ...data, code: data.code || roomCode })
@@ -133,7 +145,18 @@ export default function StudioView() {
     socketRef.current = socket
 
     return () => {
-      socket.disconnect()
+      socket.off('room-created')
+      socket.off('room-joined')
+      socket.off('participant-joined')
+      socket.off('participant-left')
+      socket.off('participant-updated')
+      socket.off('settings-updated')
+      socket.off('session-started')
+      socket.off('countdown-start')
+      socket.off('photo-received')
+      socket.off('session-complete')
+      socket.off('reaction-received')
+      socket.off('error')
     }
   }, [roomCode])
 
@@ -294,14 +317,29 @@ export default function StudioView() {
     ctx.font = '12px system-ui, sans-serif'
     ctx.fillText(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), stripCanvas.width / 2, 58)
 
-    // Photos
+    // Load every photo first — drawing a data URL into an <img> is async,
+    // so we must wait for each to actually decode before drawImage runs.
+    // Skipping this wait is why only whichever photo happened to already
+    // be cached (usually just the last one) ever showed up in the strip.
+    const loadImage = (src: string) =>
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => resolve(img)
+        img.onerror = reject
+        img.src = src
+      })
+
+    const loadedImages = await Promise.all(photos.map((p) => loadImage(p.dataUrl)))
+
+    // Photos — crop-to-fill (like CSS object-fit: cover) instead of
+    // stretching, so faces don't get squished into the fixed frame size.
     photos.forEach((photo, i) => {
+      const img = loadedImages[i]
       const y = headerH + i * (photoH + gap)
-      const img = new Image()
-      img.src = photo.dataUrl
 
       // Rounded rect clip
       const r = 8
+      ctx.save()
       ctx.beginPath()
       ctx.moveTo(padding + r, y)
       ctx.lineTo(padding + photoW - r, y)
@@ -315,7 +353,23 @@ export default function StudioView() {
       ctx.closePath()
       ctx.clip()
 
-      ctx.drawImage(img, padding, y, photoW, photoH)
+      // Compute a source crop rect that fills the destination box while
+      // preserving the image's own aspect ratio.
+      const srcRatio = img.naturalWidth / img.naturalHeight
+      const dstRatio = photoW / photoH
+      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight
+      if (srcRatio > dstRatio) {
+        // source is wider than destination — crop the sides
+        sw = img.naturalHeight * dstRatio
+        sx = (img.naturalWidth - sw) / 2
+      } else {
+        // source is taller than destination — crop top/bottom
+        sh = img.naturalWidth / dstRatio
+        sy = (img.naturalHeight - sh) / 2
+      }
+
+      ctx.drawImage(img, sx, sy, sw, sh, padding, y, photoW, photoH)
+      ctx.restore()
 
       // Photo number
       ctx.fillStyle = 'rgba(0,0,0,0.4)'
@@ -367,7 +421,7 @@ export default function StudioView() {
       {/* Top Bar */}
       <header className="glass-strong fixed top-0 left-0 right-0 z-50">
         <div className="flex items-center justify-between px-4 h-14">
-          <Button variant="ghost" size="sm" onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); setView('landing') }} className="text-white/80 hover:text-white hover:bg-white/10">
+          <Button variant="ghost" size="sm" onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); socketRef.current?.emit('leave-room'); disconnectSocket(); setView('landing') }} className="text-white/80 hover:text-white hover:bg-white/10">
             <ArrowLeft className="w-4 h-4 mr-1.5" />
             Leave
           </Button>
@@ -573,7 +627,7 @@ export default function StudioView() {
                     onClick={() => setMirrored(!mirrored)}
                     className={`rounded-xl shrink-0 ${mirrored ? 'bg-white/20 text-white' : 'text-white/70'}`}
                   >
-                    <Info className="w-5 h-5" />
+                    <FlipHorizontal2 className="w-5 h-5" />
                   </Button>
 
                   {/* Ready / Start Button */}
@@ -603,7 +657,7 @@ export default function StudioView() {
                           Ready!
                         </>
                       ) : (
-                        'I&apos;m Ready'
+                        "I'm Ready"
                       )}
                     </Button>
                   )}

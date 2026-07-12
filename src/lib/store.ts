@@ -8,6 +8,8 @@ import type {
   RoomState,
 } from './types'
 
+import { disconnectSocket } from './socket'
+
 interface AppState {
   // Navigation
   view: AppView
@@ -123,19 +125,22 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Reset
   resetSession: () =>
-    set({
-      view: 'landing',
-      roomCode: '',
-      roomState: null,
-      isCreator: false,
-      participants: [],
-      capturedPhotos: [],
-      sessionId: null,
-      finalStripData: null,
-      aiCaption: null,
-      reactions: [],
-      selectedFilter: 'none',
-      stripLayout: 'classic',
-      totalPhotos: 4,
+    set(() => {
+      disconnectSocket()
+      return {
+        view: 'landing',
+        roomCode: '',
+        roomState: null,
+        isCreator: false,
+        participants: [],
+        capturedPhotos: [],
+        sessionId: null,
+        finalStripData: null,
+        aiCaption: null,
+        reactions: [],
+        selectedFilter: 'none',
+        stripLayout: 'classic',
+        totalPhotos: 4,
+      }
     }),
 }))

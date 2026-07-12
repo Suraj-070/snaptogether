@@ -56,31 +56,41 @@ export default function JoinRoomView() {
         currentPhoto: 0,
       })
 
-      // Connect WebSocket
-      const { io: socketIo } = await import('socket.io-client')
-      const socket = socketIo('/?XTransformPort=3004', {
-        transports: ['websocket', 'polling'],
-        forceNew: true,
-      })
+      // Reuse the single shared socket connection.
+      const { getSocket } = await import('@/lib/socket')
+      const socket = getSocket()
 
-      socket.on('connect', () => {
-        socket.emit('join-room', {
-          code: code.trim().toUpperCase(),
-          username: username.trim(),
-        })
-      })
-
-      socket.on('room-joined', (roomData: any) => {
+      const onRoomJoined = (roomData: any) => {
         setRoomState(roomData)
         setParticipants(roomData.participants || [])
         setIsJoining(false)
         setView('studio')
-      })
-
-      socket.on('error', (err: any) => {
+        socket.off('room-joined', onRoomJoined)
+        socket.off('error', onSocketError)
+      }
+      const onSocketError = (err: any) => {
         toast.error(err.message || 'Failed to join room')
         setIsJoining(false)
-      })
+        socket.off('room-joined', onRoomJoined)
+        socket.off('error', onSocketError)
+      }
+
+      socket.on('room-joined', onRoomJoined)
+      socket.on('error', onSocketError)
+
+      const emitJoinRoom = () => {
+        socket.emit('join-room', {
+          code: code.trim().toUpperCase(),
+          username: username.trim(),
+        })
+      }
+
+      if (socket.connected) {
+        emitJoinRoom()
+      } else {
+        socket.once('connect', emitJoinRoom)
+        socket.connect()
+      }
     } catch {
       toast.error('Failed to join room')
       setIsJoining(false)
