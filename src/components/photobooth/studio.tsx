@@ -199,6 +199,7 @@ export default function StudioView() {
     const video = videoRef.current
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
+    if (!ctx) return
 
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight

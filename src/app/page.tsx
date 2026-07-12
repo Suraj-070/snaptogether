@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store'
 import LandingView from '@/components/photobooth/landing'
 import CreateRoomView from '@/components/photobooth/create-room'
 import JoinRoomView from '@/components/photobooth/join-room'
+import LobbyView from '@/components/photobooth/lobby'
 import StudioView from '@/components/photobooth/studio'
 import ResultView from '@/components/photobooth/result-view'
 import GalleryView from '@/components/photobooth/gallery'
@@ -32,6 +33,7 @@ export default function Home() {
         {view === 'landing' && <LandingView />}
         {view === 'create' && <CreateRoomView />}
         {view === 'join' && <JoinRoomView />}
+        {view === 'lobby' && <LobbyView />}
         {view === 'studio' && <StudioView />}
         {view === 'result' && <ResultView />}
         {view === 'gallery' && <GalleryView />}

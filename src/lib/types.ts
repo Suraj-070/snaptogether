@@ -20,6 +20,7 @@ export type AppView =
   | 'landing'
   | 'create'
   | 'join'
+  | 'lobby'
   | 'studio'
   | 'result'
   | 'gallery'

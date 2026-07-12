@@ -64,7 +64,7 @@ export default function JoinRoomView() {
         setRoomState(roomData)
         setParticipants(roomData.participants || [])
         setIsJoining(false)
-        setView('studio')
+        setView('lobby')
         socket.off('room-joined', onRoomJoined)
         socket.off('error', onSocketError)
       }

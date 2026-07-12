@@ -100,7 +100,7 @@ export default function ProfileView() {
           <div className="grid grid-cols-3 gap-4">
             {[
               { label: 'Sessions', value: stats.totalSessions, icon: Camera },
-              { label: 'Photos', value: stats.totalPhotos, icon: Image },
+              { label: 'Photos', value: stats.totalPhotos, icon: ImageIcon },
               { label: 'Favorites', value: stats.totalFavorites, icon: Heart },
             ].map((stat, i) => (
               <motion.div

@@ -62,7 +62,7 @@ function getRoomInfo(room: Room) {
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`)
 
-  socket.on('create-room', (data: { username: string; theme?: string; filter?: string; code?: string }) => {
+  socket.on('create-room', (data: { username: string; theme?: string; filter?: string; code?: string; totalPhotos?: number }) => {
     let code = data.code ? data.code.toUpperCase().trim() : generateRoomCode()
     while (rooms.has(code)) {
       if (data.code) {
@@ -89,7 +89,7 @@ io.on('connection', (socket) => {
       participants: new Map([[socket.id, participant]]),
       status: 'waiting',
       photos: [],
-      totalPhotos: 4,
+      totalPhotos: data.totalPhotos && data.totalPhotos >= 2 && data.totalPhotos <= 6 ? data.totalPhotos : 4,
       currentPhoto: 0,
     }
 
@@ -97,7 +97,7 @@ io.on('connection', (socket) => {
     socket.join(code)
     socket.data.roomCode = code
 
-    socket.emit('room-created', { code, ...getRoomInfo(room) })
+    socket.emit('room-created', getRoomInfo(room))
     console.log(`Room ${code} created by ${data.username}`)
   })
 
@@ -127,7 +127,7 @@ io.on('connection', (socket) => {
     socket.join(upperCode)
     socket.data.roomCode = upperCode
 
-    socket.emit('room-joined', { code: upperCode, ...getRoomInfo(room) })
+    socket.emit('room-joined', getRoomInfo(room))
     socket.to(upperCode).emit('participant-joined', { participant, room: getRoomInfo(room) })
     console.log(`${username} joined room ${upperCode}`)
   })
@@ -168,7 +168,10 @@ io.on('connection', (socket) => {
     if (socket.id !== room.creatorId) return
 
     const allReady = Array.from(room.participants.values()).every(p => p.isReady)
-    if (!allReady && room.participants.size > 1) return
+    if (!allReady && room.participants.size > 1) {
+      socket.emit('error', { message: 'Everyone must be ready first' })
+      return
+    }
 
     room.status = 'countdown'
     room.currentPhoto = 1

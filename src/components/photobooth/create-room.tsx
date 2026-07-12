@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Camera, ArrowLeft, Copy, Check, Sparkles, Users } from 'lucide-react'
+import { Camera, ArrowLeft, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { getSocket } from '@/lib/socket'
@@ -11,11 +11,68 @@ import type { FilterId, StripLayout } from '@/lib/types'
 import { FILTERS } from '@/lib/types'
 
 const THEMES = [
-  { id: 'classic', name: 'Classic', icon: '📷', desc: 'Traditional photobooth style' },
-  { id: 'modern', name: 'Modern', icon: '✨', desc: 'Clean magazine look' },
-  { id: 'couple', name: 'Couple', icon: '💕', desc: 'Two-person matching layout' },
-  { id: 'memory', name: 'Memory', icon: '📝', desc: 'With date, message & stickers' },
+  { id: 'classic', name: 'Classic', icon: '📷', desc: 'Traditional photobooth style', frame: 'bg-neutral-900', accent: 'from-rose-300 to-amber-200' },
+  { id: 'modern', name: 'Modern', icon: '✨', desc: 'Clean magazine look', frame: 'bg-white border border-neutral-200', accent: 'from-sky-300 to-indigo-200' },
+  { id: 'couple', name: 'Couple', icon: '💕', desc: 'Two-person matching layout', frame: 'bg-rose-50 border border-rose-200', accent: 'from-pink-300 to-rose-200' },
+  { id: 'memory', name: 'Memory', icon: '📝', desc: 'With date, message & stickers', frame: 'bg-amber-50 border border-amber-200', accent: 'from-amber-300 to-orange-200' },
 ] as const
+
+/** Mini photo-strip mockup for theme previews */
+function ThemeStripPreview({ frame, accent }: { frame: string; accent: string }) {
+  return (
+    <div className={`w-10 rounded-md p-1 flex flex-col gap-1 shadow-sm ${frame}`}>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className={`h-5 rounded-[3px] bg-gradient-to-br ${accent}`} style={{ opacity: 0.9 - i * 0.12 }} />
+      ))}
+      <div className="h-1.5" />
+    </div>
+  )
+}
+
+/** Colorful sample the CSS filter gets applied to */
+function FilterSwatch({ css }: { css: string }) {
+  return (
+    <div
+      className="w-14 h-14 rounded-lg overflow-hidden shrink-0"
+      style={{ filter: css || undefined }}
+    >
+      <div className="w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300 relative">
+        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-emerald-500/70 to-transparent" />
+        <div className="absolute top-1.5 right-2 w-3 h-3 rounded-full bg-yellow-200" />
+      </div>
+    </div>
+  )
+}
+
+/** Mini layout mockups */
+function LayoutPreview({ id }: { id: StripLayout }) {
+  const cell = 'rounded-[2px] bg-primary/25'
+  if (id === 'classic') return (
+    <div className="w-8 mx-auto flex flex-col gap-0.5 p-1 rounded bg-muted">
+      {[0,1,2,3].map(i => <div key={i} className={`h-3 ${cell}`} />)}
+    </div>
+  )
+  if (id === 'magazine') return (
+    <div className="w-14 mx-auto grid grid-cols-2 gap-0.5 p-1 rounded bg-muted">
+      <div className={`h-7 row-span-2 ${cell}`} />
+      <div className={`h-3.5 ${cell}`} />
+      <div className={`h-3 ${cell}`} />
+      <div className={`h-3 col-span-2 ${cell}`} />
+    </div>
+  )
+  if (id === 'couple') return (
+    <div className="w-14 mx-auto grid grid-cols-2 gap-0.5 p-1 rounded bg-muted">
+      {[0,1,2,3].map(i => <div key={i} className={`h-4 ${cell}`} />)}
+    </div>
+  )
+  return (
+    <div className="w-12 mx-auto flex flex-col gap-0.5 p-1 rounded bg-muted">
+      <div className={`h-6 ${cell}`} />
+      <div className="h-1.5 rounded-[2px] bg-primary/15" />
+      <div className="h-1 w-2/3 rounded-[2px] bg-primary/15" />
+    </div>
+  )
+}
 
 const LAYOUTS = [
   { id: 'classic' as StripLayout, name: 'Classic 4-Strip', icon: '⋮' },
@@ -35,7 +92,6 @@ export default function CreateRoomView() {
   } = useAppStore()
 
   const [isCreating, setIsCreating] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState('classic')
 
   const handleCreate = async () => {
@@ -75,7 +131,7 @@ export default function CreateRoomView() {
         setRoomState(roomData)
         setParticipants(roomData.participants || [])
         setIsCreating(false)
-        setView('studio')
+        setView('lobby')
         socket.off('room-created', onRoomCreated)
         socket.off('error', onSocketError)
       }
@@ -94,6 +150,7 @@ export default function CreateRoomView() {
           username: username.trim(),
           theme: selectedTheme,
           filter: selectedFilter,
+          totalPhotos,
           code: data.session.roomCode,
         })
       }
@@ -108,57 +165,6 @@ export default function CreateRoomView() {
       toast.error('Failed to create room')
       setIsCreating(false)
     }
-  }
-
-  const copyCode = (code: string) => {
-    navigator.clipboard.writeText(code)
-    setCopied(true)
-    toast.success('Room code copied!')
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  // If room already created, show waiting room
-  const roomCode = useAppStore(s => s.roomCode)
-  if (roomCode) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="glass rounded-3xl p-8 sm:p-12 max-w-md w-full text-center"
-        >
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
-            <Camera className="w-8 h-8 text-primary" />
-          </div>
-          <h2 className="text-2xl font-bold mb-2">Room Created!</h2>
-          <p className="text-muted-foreground mb-8">Share this code with your friends to join</p>
-
-          <div className="flex items-center justify-center gap-3 mb-8">
-            <div className="text-3xl sm:text-4xl font-bold tracking-[0.3em] font-mono">
-              {roomCode}
-            </div>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => copyCode(roomCode)}
-              className="rounded-xl"
-            >
-              {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-8">
-            <Users className="w-4 h-4" />
-            <span>Waiting for others to join...</span>
-          </div>
-
-          <Button onClick={() => setView('studio')} className="w-full rounded-2xl py-6">
-            Continue to Studio
-            <Sparkles className="w-4 h-4 ml-2" />
-          </Button>
-        </motion.div>
-      </div>
-    )
   }
 
   return (
@@ -197,7 +203,10 @@ export default function CreateRoomView() {
                       : 'hover:shadow-md'
                   }`}
                 >
-                  <span className="text-2xl mb-2 block">{theme.icon}</span>
+                  <div className="flex items-start gap-3 mb-2">
+                    <ThemeStripPreview frame={theme.frame} accent={theme.accent} />
+                    <span className="text-xl">{theme.icon}</span>
+                  </div>
                   <span className="text-sm font-medium block">{theme.name}</span>
                   <span className="text-xs text-muted-foreground">{theme.desc}</span>
                 </button>
@@ -216,14 +225,14 @@ export default function CreateRoomView() {
                 <button
                   key={filter.id}
                   onClick={() => setSelectedFilter(filter.id as FilterId)}
-                  className={`shrink-0 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                  className={`shrink-0 p-2 rounded-xl transition-all duration-200 flex flex-col items-center gap-1.5 ${
                     selectedFilter === filter.id
-                      ? 'bg-primary text-primary-foreground shadow-md'
+                      ? 'ring-2 ring-primary bg-primary/5 shadow-md'
                       : 'glass hover:shadow-md'
                   }`}
                 >
-                  <span className="mr-1.5">{filter.icon}</span>
-                  {filter.name}
+                  <FilterSwatch css={filter.css} />
+                  <span className="text-xs font-medium whitespace-nowrap">{filter.name}</span>
                 </button>
               ))}
             </div>
@@ -243,7 +252,9 @@ export default function CreateRoomView() {
                       : 'hover:shadow-md'
                   }`}
                 >
-                  <span className="text-lg block mb-1 font-mono">{layout.icon}</span>
+                  <div className="mb-2 h-10 flex items-center justify-center">
+                    <LayoutPreview id={layout.id} />
+                  </div>
                   <span className="text-sm font-medium">{layout.name}</span>
                 </button>
               ))}
