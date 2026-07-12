@@ -241,6 +241,26 @@ io.on('connection', (socket) => {
     io.to(code).emit('retake-notify', { order: data.order, userId: socket.id })
   })
 
+  // --- WebRTC signaling (relayed to the other peer(s) in the room) ---
+  socket.on('webrtc-offer', (data: { sdp: any; to?: string }) => {
+    const code = socket.data.roomCode
+    if (!code) return
+    if (data.to) io.to(data.to).emit('webrtc-offer', { sdp: data.sdp, from: socket.id })
+    else socket.to(code).emit('webrtc-offer', { sdp: data.sdp, from: socket.id })
+  })
+
+  socket.on('webrtc-answer', (data: { sdp: any; to: string }) => {
+    if (!socket.data.roomCode) return
+    io.to(data.to).emit('webrtc-answer', { sdp: data.sdp, from: socket.id })
+  })
+
+  socket.on('webrtc-ice', (data: { candidate: any; to?: string }) => {
+    const code = socket.data.roomCode
+    if (!code) return
+    if (data.to) io.to(data.to).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
+    else socket.to(code).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
+  })
+
   socket.on('leave-room', () => {
     const code = socket.data.roomCode
     if (!code) return

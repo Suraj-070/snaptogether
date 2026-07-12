@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import type { Socket } from 'socket.io-client'
 import { getSocket, disconnectSocket } from '@/lib/socket'
+import { useWebRTC } from '@/lib/use-webrtc'
 import type { FilterId, CapturedPhoto, Participant, RoomState } from '@/lib/types'
 import { FILTERS, getFilterCss } from '@/lib/types'
 import type { StripLayout } from '@/lib/types'
@@ -31,6 +32,8 @@ export default function StudioView() {
   } = useAppStore()
 
   const videoRef = useRef<HTMLVideoElement>(null)
+  const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const socketRef = useRef<Socket | null>(null)
@@ -214,6 +217,7 @@ export default function StudioView() {
           return
         }
         streamRef.current = stream
+        setLocalStream(stream)
         if (videoRef.current) {
           videoRef.current.srcObject = stream
           videoRef.current.onloadedmetadata = () => {
@@ -230,8 +234,23 @@ export default function StudioView() {
       mounted = false
       streamRef.current?.getTracks().forEach(t => t.stop())
       streamRef.current = null
+      setLocalStream(null)
     }
   }, [cameraAttempt])
+
+  // --- Live partner video (WebRTC) ---
+  const { remoteStream, connected: peerConnected } = useWebRTC({
+    socket: socketRef.current ?? (roomCode ? getSocket() : null),
+    localStream,
+    isInitiator: isCreator,
+    participantCount: participants.length,
+  })
+
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream
+    }
+  }, [remoteStream])
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return
@@ -241,15 +260,50 @@ export default function StudioView() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    const remote = remoteVideoRef.current
+    const hasRemote = !!(remote && remoteStream && remote.videoWidth > 0)
 
-    if (mirrored) {
-      ctx.translate(canvas.width, 0)
-      ctx.scale(-1, 1)
+    if (hasRemote) {
+      // Side-by-side couple shot: both live cameras in one frame
+      const h = Math.min(video.videoHeight, remote!.videoHeight) || 720
+      const halfW = Math.round((h * 4) / 3 / 2) * 2
+      canvas.width = halfW * 2
+      canvas.height = h
+
+      const drawCover = (v: HTMLVideoElement, dx: number, mirror: boolean) => {
+        const scale = Math.max(halfW / v.videoWidth, h / v.videoHeight)
+        const sw = halfW / scale
+        const sh = h / scale
+        const sx = (v.videoWidth - sw) / 2
+        const sy = (v.videoHeight - sh) / 2
+        ctx.save()
+        if (mirror) {
+          ctx.translate(dx + halfW, 0)
+          ctx.scale(-1, 1)
+          ctx.drawImage(v, sx, sy, sw, sh, 0, 0, halfW, h)
+        } else {
+          ctx.drawImage(v, sx, sy, sw, sh, dx, 0, halfW, h)
+        }
+        ctx.restore()
+      }
+
+      drawCover(video, 0, mirrored)
+      drawCover(remote!, halfW, false)
+
+      // subtle divider
+      ctx.fillStyle = 'rgba(255,255,255,0.6)'
+      ctx.fillRect(halfW - 1, 0, 2, h)
+    } else {
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+
+      if (mirrored) {
+        ctx.translate(canvas.width, 0)
+        ctx.scale(-1, 1)
+      }
+      ctx.drawImage(video, 0, 0)
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
     }
-    ctx.drawImage(video, 0, 0)
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
 
     // Apply filter via CSS on canvas
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
@@ -286,7 +340,7 @@ export default function StudioView() {
         setPhase('review')
       }, 1500)
     }
-  }, [currentCapture, totalPhotos, selectedFilter, userId, mirrored, addPhoto])
+  }, [currentCapture, totalPhotos, selectedFilter, userId, mirrored, addPhoto, remoteStream])
 
   const startCountdownSequence = useCallback(() => {
     setPhase('countdown')
@@ -488,9 +542,14 @@ export default function StudioView() {
 
       {/* Main Camera Area */}
       <div className="flex-1 flex items-center justify-center pt-14 pb-24 relative">
-        {/* Camera Preview */}
-        <div className="relative w-full max-w-2xl mx-auto px-4">
-          <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 shadow-2xl">
+        {/* Camera Preview — splits into a live duo view when partner connects */}
+        <div className={`relative w-full mx-auto px-4 ${remoteStream ? 'max-w-5xl' : 'max-w-2xl'}`}>
+          <div className={`grid gap-3 ${remoteStream ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+          <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 shadow-2xl ring-1 ring-white/10">
+            {/* name badge */}
+            <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs font-medium">
+              {username || 'You'} <span className="text-white/50">(you)</span>
+            </div>
             {cameraError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 p-8 text-center">
                 <Camera className="w-12 h-12 mb-4 opacity-50" />
@@ -602,6 +661,28 @@ export default function StudioView() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Partner live tile */}
+          {remoteStream && (
+            <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 shadow-2xl ring-1 ring-white/10">
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                style={{ filter: filterCss || undefined }}
+              />
+              <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs font-medium">
+                {participants.find(p => p.username !== username)?.username || 'Partner'}
+              </div>
+              <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md">
+                <span className={`w-2 h-2 rounded-full ${peerConnected ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
+                <span className="text-[10px] font-semibold tracking-wider text-white/80">LIVE</span>
+              </div>
+            </div>
+          )}
           </div>
         </div>
 
