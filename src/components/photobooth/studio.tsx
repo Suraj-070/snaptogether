@@ -161,15 +161,46 @@ export default function StudioView() {
   }, [roomCode])
 
   // Camera setup
+  const [cameraAttempt, setCameraAttempt] = useState(0)
   useEffect(() => {
     let mounted = true
 
+    function friendlyCameraError(err: any): string {
+      switch (err?.name) {
+        case 'NotReadableError':
+        case 'TrackStartError':
+          return 'Camera is being used by another app or browser tab. Close it there, then tap Retry.'
+        case 'NotAllowedError':
+        case 'PermissionDeniedError':
+          return 'Camera permission was blocked. Allow camera access in your browser settings, then tap Retry.'
+        case 'NotFoundError':
+        case 'DevicesNotFoundError':
+          return 'No camera found on this device.'
+        case 'OverconstrainedError':
+          return 'Camera does not support the requested resolution.'
+        default:
+          return err?.message || 'Could not access the camera.'
+      }
+    }
+
     async function startCamera() {
+      setCameraError(null)
+      setCameraReady(false)
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        })
+        let stream: MediaStream
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          })
+        } catch (firstErr: any) {
+          // Fallback: minimal constraints (helps on devices that reject ideal res)
+          if (firstErr?.name === 'OverconstrainedError' || firstErr?.name === 'NotReadableError') {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+          } else {
+            throw firstErr
+          }
+        }
         if (!mounted) {
           stream.getTracks().forEach(t => t.stop())
           return
@@ -182,7 +213,7 @@ export default function StudioView() {
           }
         }
       } catch (err: any) {
-        if (mounted) setCameraError(err.message || 'Camera access denied')
+        if (mounted) setCameraError(friendlyCameraError(err))
       }
     }
 
@@ -190,8 +221,9 @@ export default function StudioView() {
     return () => {
       mounted = false
       streamRef.current?.getTracks().forEach(t => t.stop())
+      streamRef.current = null
     }
-  }, [])
+  }, [cameraAttempt])
 
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return
@@ -420,7 +452,7 @@ export default function StudioView() {
   return (
     <div className="min-h-screen flex flex-col bg-black">
       {/* Top Bar */}
-      <header className="glass-strong fixed top-0 left-0 right-0 z-50">
+      <header className="fixed top-0 left-0 right-0 z-50 bg-black/60 backdrop-blur-xl border-b border-white/10">
         <div className="flex items-center justify-between px-4 h-14">
           <Button variant="ghost" size="sm" onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); socketRef.current?.emit('leave-room'); disconnectSocket(); setView('landing') }} className="text-white/80 hover:text-white hover:bg-white/10">
             <ArrowLeft className="w-4 h-4 mr-1.5" />
@@ -454,7 +486,14 @@ export default function StudioView() {
             {cameraError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 p-8 text-center">
                 <Camera className="w-12 h-12 mb-4 opacity-50" />
-                <p className="text-sm">{cameraError}</p>
+                <p className="text-sm max-w-xs mb-5">{cameraError}</p>
+                <Button
+                  variant="outline"
+                  onClick={() => setCameraAttempt(a => a + 1)}
+                  className="rounded-xl bg-white/10 border-white/20 text-white hover:bg-white/20"
+                >
+                  Retry Camera
+                </Button>
               </div>
             ) : (
               <video
@@ -500,7 +539,7 @@ export default function StudioView() {
             {/* Photo Progress */}
             {(phase === 'capture' || phase === 'countdown') && (
               <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
-                <div className="glass rounded-full px-4 py-2 text-sm text-white font-medium">
+                <div className="bg-black/50 backdrop-blur-md rounded-full px-4 py-2 text-sm text-white font-medium">
                   Photo {currentCapture} / {totalPhotos}
                 </div>
                 <div className="flex gap-1.5">
@@ -532,7 +571,7 @@ export default function StudioView() {
             {/* Ready indicator */}
             {phase === 'setup' && participants.length > 1 && (
               <div className="absolute top-4 left-4 right-4">
-                <div className="glass rounded-xl p-3">
+                <div className="bg-black/55 backdrop-blur-md border border-white/10 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-medium text-white/80">Participants</span>
                     <span className="text-xs text-white/60">{participants.filter(p => p.isReady).length}/{participants.length} ready</span>
@@ -583,7 +622,7 @@ export default function StudioView() {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="glass-strong rounded-2xl px-3 py-2 flex gap-1"
+                className="bg-black/60 backdrop-blur-xl border border-white/10 rounded-2xl px-3 py-2 flex gap-1"
               >
                 {REACTION_EMOJIS.slice(0, 5).map((emoji) => (
                   <button
@@ -599,7 +638,7 @@ export default function StudioView() {
           </div>
         )}
 
-        <div className="glass-strong border-t border-white/10">
+        <div className="bg-black/70 backdrop-blur-xl border-t border-white/10">
           <div className="max-w-2xl mx-auto px-4 py-3">
             <AnimatePresence mode="wait">
               {/* Setup Phase Controls */}
@@ -736,7 +775,7 @@ export default function StudioView() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="glass-strong border-t border-white/10 p-4"
+              className="bg-black/70 backdrop-blur-xl border-t border-white/10 p-4"
             >
               <div className="max-w-2xl mx-auto">
                 <h4 className="text-white/70 text-xs font-medium mb-3 uppercase tracking-wider">Filters</h4>
@@ -749,17 +788,13 @@ export default function StudioView() {
                         selectedFilter === filter.id ? 'ring-2 ring-primary scale-105' : 'opacity-70 hover:opacity-100'
                       }`}
                     >
-                      <div className="aspect-square bg-gradient-to-br from-rose-200 via-orange-100 to-amber-200 relative">
-                        {cameraReady && videoRef.current && (
-                          <video
-                            ref={selectedFilter === filter.id ? videoRef : undefined}
-                            autoPlay
-                            playsInline
-                            muted
-                            className={`w-full h-full object-cover ${mirrored ? 'scale-x-[-1]' : ''}`}
-                            style={{ filter: filter.css || undefined }}
-                          />
-                        )}
+                      <div
+                        className="aspect-square relative"
+                        style={{ filter: filter.css || undefined }}
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300" />
+                        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-emerald-600/70 to-transparent" />
+                        <div className="absolute top-2 right-2.5 w-4 h-4 rounded-full bg-yellow-100" />
                       </div>
                       <div className="py-1.5 px-1 text-center">
                         <span className="text-[10px] text-white/80 font-medium">{filter.name}</span>
