@@ -11,21 +11,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Room code and username are required' }, { status: 400 })
     }
 
-    const session = await db.photoSession.findUnique({
-      where: { roomCode: code.toUpperCase().trim() },
-      include: { creator: true, photos: true },
-    })
+    // Run both round-trips in parallel
+    const [session, user] = await Promise.all([
+      db.photoSession.findUnique({
+        where: { roomCode: code.toUpperCase().trim() },
+        include: { creator: true },
+      }),
+      db.user.upsert({
+        where: { username: username.trim() },
+        update: {},
+        create: { username: username.trim(), email: `${uuidv4()}@guest.photobooth` },
+      }),
+    ])
 
     if (!session) {
       return NextResponse.json({ error: 'Room not found' }, { status: 404 })
-    }
-
-    // Create or find user
-    let user = await db.user.findUnique({ where: { username: username.trim() } })
-    if (!user) {
-      user = await db.user.create({
-        data: { username: username.trim(), email: `${uuidv4()}@guest.photobooth` },
-      })
     }
 
     return NextResponse.json({ session, user })

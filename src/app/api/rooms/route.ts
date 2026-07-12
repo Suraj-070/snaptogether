@@ -11,37 +11,42 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Username is required' }, { status: 400 })
     }
 
-    // Generate unique room code
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-    let code = ''
-    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)]
-
-    // Ensure uniqueness
-    let existing = await db.photoSession.findUnique({ where: { roomCode: code } })
-    while (existing) {
-      code = ''
-      for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)]
-      existing = await db.photoSession.findUnique({ where: { roomCode: code } })
+    const genCode = () => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+      let c = ''
+      for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)]
+      return c
     }
 
-    // Create or find user
-    let user = await db.user.findUnique({ where: { username: username.trim() } })
-    if (!user) {
-      user = await db.user.create({
-        data: { username: username.trim(), email: `${uuidv4()}@guest.photobooth` },
-      })
-    }
-
-    const session = await db.photoSession.create({
-      data: {
-        roomCode: code,
-        creatorId: user.id,
-        theme,
-        filter,
-        status: 'waiting',
-      },
-      include: { creator: true },
+    // 1 round-trip: find-or-create user
+    const user = await db.user.upsert({
+      where: { username: username.trim() },
+      update: {},
+      create: { username: username.trim(), email: `${uuidv4()}@guest.photobooth` },
     })
+
+    // 1 round-trip: create session; retry only on the (astronomically rare)
+    // code collision instead of pre-checking with extra queries.
+    let session = null
+    for (let attempt = 0; attempt < 3 && !session; attempt++) {
+      try {
+        session = await db.photoSession.create({
+          data: {
+            roomCode: genCode(),
+            creatorId: user.id,
+            theme,
+            filter,
+            status: 'waiting',
+          },
+          include: { creator: true },
+        })
+      } catch (e: any) {
+        if (e?.code !== 'P2002') throw e // unique violation -> retry
+      }
+    }
+    if (!session) {
+      return NextResponse.json({ error: 'Failed to create room' }, { status: 500 })
+    }
 
     return NextResponse.json({ session, user })
   } catch (error) {

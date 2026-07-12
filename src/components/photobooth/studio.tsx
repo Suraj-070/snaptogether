@@ -186,6 +186,14 @@ export default function StudioView() {
     async function startCamera() {
       setCameraError(null)
       setCameraReady(false)
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError(
+          window.isSecureContext
+            ? 'This browser does not support camera access.'
+            : 'Camera needs a secure (HTTPS) connection. Open the app via HTTPS or localhost — on a phone over http://<ip> the browser disables the camera.'
+        )
+        return
+      }
       try {
         let stream: MediaStream
         try {

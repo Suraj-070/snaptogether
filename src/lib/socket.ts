@@ -11,7 +11,16 @@ let socket: Socket | null = null
  */
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3004', {
+    // Derive the socket URL at runtime so phones on the same network hit
+    // the dev machine (e.g. http://192.168.1.5:3004) instead of the
+    // phone's own localhost. NEXT_PUBLIC_SOCKET_URL still wins when set
+    // (production / tunnels).
+    const fallback =
+      typeof window !== 'undefined'
+        ? `${window.location.protocol}//${window.location.hostname}:3004`
+        : 'http://localhost:3004'
+
+    socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || fallback, {
       path: '/',
       transports: ['websocket', 'polling'],
       autoConnect: false,
