@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  username   String   @unique
+  email      String?
+  avatar     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  sessions   PhotoSession[]
+  photos     Photo[]
+  memories   Memory[]
+}
+
+model PhotoSession {
+  id           String   @id @default(cuid())
+  roomCode     String   @unique
+  creatorId    String
+  theme        String   @default("classic")
+  filter       String   @default("none")
+  status       String   @default("waiting") // waiting, active, completed
+  stripLayout  String   @default("classic")
+  customMessage String?
+  createdAt    DateTime @default(now())
+  completedAt  DateTime?
+  creator      User     @relation(fields: [creatorId], references: [id])
+  photos       Photo[]
+  memories     Memory[]
+}
+
+model Photo {
+  id        String   @id @default(cuid())
+  sessionId String
+  uploaderId String
+  imageData  String   // base64 encoded
+  filter    String   @default("none")
+  order     Int
+  createdAt DateTime @default(now())
+  session   PhotoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  uploader  User        @relation(fields: [uploaderId], references: [id])
+}
+
+model Memory {
+  id           String   @id @default(cuid())
+  sessionId    String
+  stripData    String?  // base64 encoded final strip
+  caption      String?
+  isFavorite   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  session      PhotoSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user         User        @relation(fields: [userId], references: [id])
+  userId       String
+}
