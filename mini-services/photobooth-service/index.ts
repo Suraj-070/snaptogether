@@ -160,13 +160,31 @@ io.on('connection', (socket) => {
     io.to(code).emit('settings-updated', { room: getRoomInfo(room) })
   })
 
+  socket.on('enter-studio', () => {
+    const code = socket.data.roomCode
+    if (!code) return
+    const room = rooms.get(code)
+    if (!room) return
+    const allReady = Array.from(room.participants.values()).every(p => p.isReady)
+    if (!allReady && room.participants.size > 1) {
+      socket.emit('error', { message: 'Everyone must be ready first' })
+      return
+    }
+    io.to(code).emit('studio-entered', { room: getRoomInfo(room) })
+  })
+
+  // Pose prompts shown during each countdown — synced for everyone
+  const POSE_PROMPTS = [
+    'Silly face! 🤪', 'Look at each other 👀', 'Heart hands 🫶',
+    'Biggest smile 😁', 'Serious model face 😐', 'Point at each other 👉',
+    'Peace signs ✌️', 'Surprised! 😱', 'Blow a kiss 😘', 'Thumbs up 👍',
+  ]
+
   socket.on('start-session', () => {
     const code = socket.data.roomCode
     if (!code) return
     const room = rooms.get(code)
     if (!room) return
-    if (socket.id !== room.creatorId) return
-
     const allReady = Array.from(room.participants.values()).every(p => p.isReady)
     if (!allReady && room.participants.size > 1) {
       socket.emit('error', { message: 'Everyone must be ready first' })
@@ -175,7 +193,8 @@ io.on('connection', (socket) => {
 
     room.status = 'countdown'
     room.currentPhoto = 1
-    io.to(code).emit('session-started', { room: getRoomInfo(room) })
+    const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
+    io.to(code).emit('session-started', { room: getRoomInfo(room), prompt })
   })
 
   socket.on('start-countdown', () => {
@@ -185,7 +204,8 @@ io.on('connection', (socket) => {
     if (!room) return
 
     room.status = 'countdown'
-    io.to(code).emit('countdown-start', { count: 3, photo: room.currentPhoto, total: room.totalPhotos })
+    const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
+    io.to(code).emit('countdown-start', { count: 3, photo: room.currentPhoto, total: room.totalPhotos, prompt })
   })
 
   socket.on('photo-captured', (data: { imageData: string; order: number }) => {
@@ -265,6 +285,16 @@ io.on('connection', (socket) => {
     if (!code) return
     if (data.to) io.to(data.to).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
     else socket.to(code).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
+  })
+
+  // Collaborative strip building — relay slot changes + open signal
+  socket.on('strip-open', () => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-open')
+  })
+  socket.on('strip-slot-update', (data: { slots: (number | null)[] }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-slot-update', data)
   })
 
   socket.on('leave-room', () => {

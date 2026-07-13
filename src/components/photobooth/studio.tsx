@@ -33,6 +33,8 @@ export default function StudioView() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
+  const [posePrompt, setPosePrompt] = useState<string | null>(null)
+  const [heartBursts, setHeartBursts] = useState<number[]>([])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const socketRef = useRef<Socket | null>(null)
@@ -114,10 +116,12 @@ export default function StudioView() {
 
     socket.on('session-started', (data: any) => {
       setRoomState(data.room)
+      if (data.prompt) setPosePrompt(data.prompt)
       startCountdownSequence()
     })
 
     socket.on('countdown-start', (data: any) => {
+      if (data.prompt) setPosePrompt(data.prompt)
       startCountdownSequence()
     })
 
@@ -128,6 +132,11 @@ export default function StudioView() {
     socket.on('session-complete', (data: any) => {
       setRoomState(data.room)
       setPhase('review')
+    })
+
+    // Partner opened the strip builder — follow them in
+    socket.on('strip-open', () => {
+      setView('stripBuilder')
     })
 
     socket.on('reaction-received', (data: any) => {
@@ -153,6 +162,7 @@ export default function StudioView() {
       socket.off('participant-updated')
       socket.off('settings-updated')
       socket.off('session-started')
+      socket.off('strip-open')
       socket.off('countdown-start')
       socket.off('photo-received')
       socket.off('session-complete')
@@ -454,7 +464,13 @@ export default function StudioView() {
 
               {/* Partner half */}
               {participants.length > 1 && (
-                <div className="relative h-full w-1/2 border-l border-white/15 bg-neutral-950">
+                <div
+                  className="relative h-full w-1/2 border-l border-white/15 bg-neutral-950"
+                  onDoubleClick={() => {
+                    setHeartBursts(prev => [...prev, Date.now()])
+                    handleSendReaction('❤️')
+                  }}
+                >
                   {remoteStream ? (
                     <video
                       ref={remoteVideoRef}
@@ -488,38 +504,36 @@ export default function StudioView() {
               )}
             </div>
 
-            {/* Filter circles — IG-style row overlaying the frame bottom */}
-            {phase === 'setup' && !cameraError && (
-              <div className="absolute bottom-10 left-0 right-0 z-20 px-3">
-                <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-center py-1">
-                  {FILTERS.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
-                      className="shrink-0 flex flex-col items-center gap-1"
-                    >
-                      <span className={`block w-12 h-12 rounded-full overflow-hidden transition-all duration-200 ${
-                        selectedFilter === f.id
-                          ? 'ring-[2.5px] ring-white scale-110 shadow-lg'
-                          : 'ring-1 ring-white/25 opacity-80 hover:opacity-100'
-                      }`}>
-                        {f.id === 'none' ? (
-                          <span className="w-full h-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white text-lg">✕</span>
-                        ) : (
-                          <span
-                            className="block w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300"
-                            style={{ filter: f.css || undefined }}
-                          />
-                        )}
-                      </span>
-                      {selectedFilter === f.id && (
-                        <span className="text-[9px] font-medium text-white drop-shadow">{f.name}</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Heart bursts (double-tap partner) */}
+            <AnimatePresence>
+              {heartBursts.map((t) => (
+                <motion.div
+                  key={t}
+                  initial={{ opacity: 1, scale: 0.4 }}
+                  animate={{ opacity: 0, scale: 2.2, y: -50 }}
+                  transition={{ duration: 1 }}
+                  onAnimationComplete={() => setHeartBursts(prev => prev.filter(x => x !== t))}
+                  className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 text-7xl"
+                >
+                  ❤️
+                </motion.div>
+              ))}
+            </AnimatePresence>
+
+            {/* Pose prompt — synced for everyone during countdown/capture */}
+            <AnimatePresence>
+              {posePrompt && (phase === 'countdown' || phase === 'capture') && (
+                <motion.div
+                  key={posePrompt}
+                  initial={{ opacity: 0, y: 16, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 px-4 py-1.5 rounded-full bg-black/55 backdrop-blur-md text-white text-sm font-semibold whitespace-nowrap"
+                >
+                  {posePrompt}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Flash Overlay — whole frame */}
             <AnimatePresence>
@@ -583,6 +597,40 @@ export default function StudioView() {
               </div>
             )}
           </div>
+
+            {/* Filter circles — IG-style row overlaying the frame bottom */}
+            {phase === 'setup' && !cameraError && (
+              <div className="relative mt-3 sm:mt-0 sm:absolute sm:bottom-14 sm:left-0 sm:right-0 z-20 px-1 sm:px-3">
+                <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-center py-1">
+                  {FILTERS.map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
+                      className="shrink-0 flex flex-col items-center gap-1"
+                    >
+                      <span className={`block w-12 h-12 rounded-full overflow-hidden transition-all duration-200 ${
+                        selectedFilter === f.id
+                          ? 'ring-[2.5px] ring-white scale-110 shadow-lg'
+                          : 'ring-1 ring-white/25 opacity-80 hover:opacity-100'
+                      }`}>
+                        {f.id === 'none' ? (
+                          <span className="w-full h-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white text-lg">✕</span>
+                        ) : (
+                          <span
+                            className="block w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300"
+                            style={{ filter: f.css || undefined }}
+                          />
+                        )}
+                      </span>
+                      {selectedFilter === f.id && (
+                        <span className="text-[9px] font-medium text-white drop-shadow">{f.name}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
 
           {/* Ready status — slim, under the frame */}
           {phase === 'setup' && participants.length > 1 && (
@@ -660,37 +708,16 @@ export default function StudioView() {
                     <FlipHorizontal2 className="w-5 h-5" />
                   </Button>
 
-                  {/* Ready / Start Button */}
-                  {isCreator ? (
-                    <Button
-                      size="lg"
-                      onClick={handleStartSession}
-                      disabled={!cameraReady || (participants.length > 1 && !allReady)}
-                      className="flex-1 rounded-2xl py-6 text-base font-medium bg-primary hover:bg-primary/90 text-primary-foreground"
-                    >
-                      <Camera className="w-5 h-5 mr-2" />
-                      Start Session
-                    </Button>
-                  ) : (
-                    <Button
-                      size="lg"
-                      onClick={handleToggleReady}
-                      className={`flex-1 rounded-2xl py-6 text-base font-medium ${
-                        isReady
-                          ? 'bg-green-500 hover:bg-green-600 text-white'
-                          : 'bg-white/20 hover:bg-white/30 text-white'
-                      }`}
-                    >
-                      {isReady ? (
-                        <>
-                          <Check className="w-5 h-5 mr-2" />
-                          Ready!
-                        </>
-                      ) : (
-                        "I'm Ready"
-                      )}
-                    </Button>
-                  )}
+                  {/* Start — either person can kick off the shoot */}
+                  <Button
+                    size="lg"
+                    onClick={handleStartSession}
+                    disabled={!cameraReady}
+                    className="flex-1 rounded-2xl py-6 text-base font-medium bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
+                    <Camera className="w-5 h-5 mr-2" />
+                    Start Session
+                  </Button>
                 </motion.div>
               )}
 
@@ -745,7 +772,7 @@ export default function StudioView() {
                     </Button>
                     <Button
                       size="lg"
-                      onClick={() => setView('stripBuilder')}
+                      onClick={() => { socketRef.current?.emit('strip-open'); setView('stripBuilder') }}
                       className="flex-[2] rounded-2xl py-5 bg-primary hover:bg-primary/90 text-primary-foreground"
                     >
                       <Sparkles className="w-4 h-4 mr-2" />

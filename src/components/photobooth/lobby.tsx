@@ -39,7 +39,7 @@ export default function LobbyView() {
       syncRoom(data)
       if (data.username) toast(`${data.username} left`)
     }
-    const onStarted = (data: any) => {
+    const onEntered = (data: any) => {
       syncRoom(data)
       setView('studio')
     }
@@ -48,14 +48,14 @@ export default function LobbyView() {
     socket.on('participant-left', onLeft)
     socket.on('participant-updated', syncRoom)
     socket.on('settings-updated', syncRoom)
-    socket.on('session-started', onStarted)
+    socket.on('studio-entered', onEntered)
 
     return () => {
       socket.off('participant-joined', onJoined)
       socket.off('participant-left', onLeft)
       socket.off('participant-updated', syncRoom)
       socket.off('settings-updated', syncRoom)
-      socket.off('session-started', onStarted)
+      socket.off('studio-entered', onEntered)
     }
   }, [setParticipants, setRoomState, setView])
 
@@ -87,7 +87,7 @@ export default function LobbyView() {
   }
 
   const startSession = () => {
-    getSocket().emit('start-session')
+    getSocket().emit('enter-studio')
   }
 
   const leaveRoom = () => {
@@ -193,7 +193,7 @@ export default function LobbyView() {
           {isCreator ? (
             <Button onClick={startSession} className="w-full rounded-2xl py-6 text-base font-medium">
               <Play className="w-5 h-5 mr-2" />
-              Start Photobooth
+              Enter Studio
               {participants.length < 2 && (
                 <span className="ml-2 text-xs opacity-70">(solo)</span>
               )}

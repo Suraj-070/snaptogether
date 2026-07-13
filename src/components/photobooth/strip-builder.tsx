@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Sparkles, ArrowLeft, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { renderStrip } from '@/lib/strip'
+import { getSocket } from '@/lib/socket'
 import type { CapturedPhoto } from '@/lib/types'
 
 /**
@@ -24,6 +25,26 @@ export default function StripBuilderView() {
     () => Array(slotCount).fill(null)
   )
   const [isBuilding, setIsBuilding] = useState(false)
+
+  // --- Collaborative editing: slot changes sync live between partners ---
+  const applyingRemote = useRef(false)
+  useEffect(() => {
+    const socket = getSocket()
+    const onRemoteSlots = (data: { slots: (number | null)[] }) => {
+      applyingRemote.current = true
+      // photo ids differ per device — sync by capture order, same on both sides
+      setSlots(data.slots.map(o => (o === null ? null : capturedPhotos.find(p => p.order === o) ?? null)))
+      // release after state applies
+      requestAnimationFrame(() => { applyingRemote.current = false })
+    }
+    socket.on('strip-slot-update', onRemoteSlots)
+    return () => { socket.off('strip-slot-update', onRemoteSlots) }
+  }, [capturedPhotos])
+
+  useEffect(() => {
+    if (applyingRemote.current) return
+    getSocket().emit('strip-slot-update', { slots: slots.map(s => s?.order ?? null) })
+  }, [slots])
 
   const usedIds = new Set(slots.filter(Boolean).map(p => p!.id))
   const pool = capturedPhotos.filter(p => !usedIds.has(p.id))
