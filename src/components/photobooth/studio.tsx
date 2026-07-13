@@ -116,13 +116,21 @@ export default function StudioView() {
 
     socket.on('session-started', (data: any) => {
       setRoomState(data.room)
-      if (data.prompt) setPosePrompt(data.prompt)
-      startCountdownSequence()
     })
 
     socket.on('countdown-start', (data: any) => {
       if (data.prompt) setPosePrompt(data.prompt)
-      startCountdownSequence()
+      setCurrentCapture(data.photo)
+      startCountdownSequence(data.count ?? 5)
+    })
+
+    socket.on('capture-now', (data: any) => {
+      capturePhotoRef.current(data.photo)
+    })
+
+    socket.on('session-review', (data: any) => {
+      setRoomState(data.room)
+      setPhase('review')
     })
 
     socket.on('photo-received', (data: any) => {
@@ -163,6 +171,8 @@ export default function StudioView() {
       socket.off('settings-updated')
       socket.off('session-started')
       socket.off('strip-open')
+      socket.off('capture-now')
+      socket.off('session-review')
       socket.off('countdown-start')
       socket.off('photo-received')
       socket.off('session-complete')
@@ -262,7 +272,7 @@ export default function StudioView() {
 
   const partnerName = participants.find(p => p.username !== username)?.username || 'partner'
 
-  const capturePhoto = useCallback(() => {
+  const capturePhoto = useCallback((order: number) => {
     if (!videoRef.current || !canvasRef.current) return
 
     const video = videoRef.current
@@ -274,35 +284,28 @@ export default function StudioView() {
     const hasRemote = !!(remote && remoteStream && remote.videoWidth > 0)
 
     if (hasRemote) {
-      // Side-by-side couple shot: both live cameras in one frame
+      // Side-by-side couple shot — FULL frames, no cropping/zoom. Each half
+      // keeps its camera's own aspect ratio, scaled to a common height.
       const h = Math.min(video.videoHeight, remote!.videoHeight) || 720
-      const halfW = Math.round((h * 4) / 3 / 2) * 2
-      canvas.width = halfW * 2
+      const wL = Math.round(h * (video.videoWidth / video.videoHeight))
+      const wR = Math.round(h * (remote!.videoWidth / remote!.videoHeight))
+      canvas.width = wL + wR
       canvas.height = h
 
-      const drawCover = (v: HTMLVideoElement, dx: number, mirror: boolean) => {
-        const scale = Math.max(halfW / v.videoWidth, h / v.videoHeight)
-        const sw = halfW / scale
-        const sh = h / scale
-        const sx = (v.videoWidth - sw) / 2
-        const sy = (v.videoHeight - sh) / 2
-        ctx.save()
-        if (mirror) {
-          ctx.translate(dx + halfW, 0)
-          ctx.scale(-1, 1)
-          ctx.drawImage(v, sx, sy, sw, sh, 0, 0, halfW, h)
-        } else {
-          ctx.drawImage(v, sx, sy, sw, sh, dx, 0, halfW, h)
-        }
-        ctx.restore()
+      ctx.save()
+      if (mirrored) {
+        ctx.translate(wL, 0)
+        ctx.scale(-1, 1)
+        ctx.drawImage(video, 0, 0, wL, h)
+      } else {
+        ctx.drawImage(video, 0, 0, wL, h)
       }
-
-      drawCover(video, 0, mirrored)
-      drawCover(remote!, halfW, false)
+      ctx.restore()
+      ctx.drawImage(remote!, wL, 0, wR, h)
 
       // subtle divider
       ctx.fillStyle = 'rgba(255,255,255,0.6)'
-      ctx.fillRect(halfW - 1, 0, 2, h)
+      ctx.fillRect(wL - 1, 0, 2, h)
     } else {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
@@ -322,16 +325,13 @@ export default function StudioView() {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       dataUrl,
       filter: selectedFilter,
-      order: currentCapture,
+      order,
       timestamp: Date.now(),
       userId: userId || 'local',
     }
 
     addPhoto(photo)
-    socketRef.current?.emit('photo-captured', {
-      imageData: dataUrl,
-      order: currentCapture,
-    })
+    setCurrentCapture(order)
 
     // Flash effect
     setFlashActive(true)
@@ -339,22 +339,15 @@ export default function StudioView() {
 
     // Haptic feedback
     if (navigator.vibrate) navigator.vibrate(50)
+  }, [selectedFilter, userId, mirrored, addPhoto, remoteStream])
 
-    // Next photo or complete
-    if (currentCapture < totalPhotos) {
-      setTimeout(() => {
-        setCurrentCapture(prev => prev + 1)
-      }, 1500)
-    } else {
-      setTimeout(() => {
-        setPhase('review')
-      }, 1500)
-    }
-  }, [currentCapture, totalPhotos, selectedFilter, userId, mirrored, addPhoto, remoteStream])
+  // Socket handlers register once — read the latest capture fn through a ref
+  const capturePhotoRef = useRef(capturePhoto)
+  useEffect(() => { capturePhotoRef.current = capturePhoto }, [capturePhoto])
 
-  const startCountdownSequence = useCallback(() => {
+  const startCountdownSequence = useCallback((secs = 5) => {
     setPhase('countdown')
-    let count = 3
+    let count = secs
     setCountdown(count)
 
     const interval = setInterval(() => {
@@ -365,11 +358,10 @@ export default function StudioView() {
         clearInterval(interval)
         setCountdown(null)
         setPhase('capture')
-        // Capture after a brief moment
-        setTimeout(() => capturePhoto(), 200)
+        // actual capture fires on the server's synced 'capture-now'
       }
     }, 1000)
-  }, [capturePhoto])
+  }, [])
 
   const handleStartSession = () => {
     socketRef.current?.emit('start-session')
@@ -730,13 +722,14 @@ export default function StudioView() {
                   exit={{ opacity: 0, scale: 0.9 }}
                   className="flex items-center justify-center gap-4"
                 >
-                  <Button
-                    size="lg"
-                    onClick={capturePhoto}
-                    className="w-16 h-16 rounded-full bg-white text-black hover:bg-white/90 shadow-lg shadow-white/20 p-0"
-                  >
-                    <Camera className="w-7 h-7" />
-                  </Button>
+                  <div className="flex items-center gap-3 text-white/80 text-sm font-medium py-3">
+                    <motion.span
+                      animate={{ scale: [1, 1.25, 1] }}
+                      transition={{ duration: 0.9, repeat: Infinity }}
+                      className="w-3 h-3 rounded-full bg-red-500"
+                    />
+                    Capturing {currentCapture} of {roomState?.totalPhotos ?? 6}...
+                  </div>
                 </motion.div>
               )}
 

@@ -180,21 +180,44 @@ io.on('connection', (socket) => {
     'Peace signs ✌️', 'Surprised! 😱', 'Blow a kiss 😘', 'Thumbs up 👍',
   ]
 
-  socket.on('start-session', () => {
+  const SHOT_COUNT = 6
+  const COUNTDOWN_SECS = 5
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+  // Server drives the whole shoot so both screens stay perfectly in sync:
+  // 6 shots, each = synced 5s countdown -> capture signal -> short gap.
+  socket.on('start-session', async () => {
     const code = socket.data.roomCode
     if (!code) return
     const room = rooms.get(code)
     if (!room) return
-    const allReady = Array.from(room.participants.values()).every(p => p.isReady)
-    if (!allReady && room.participants.size > 1) {
-      socket.emit('error', { message: 'Everyone must be ready first' })
-      return
+    if ((room as any).sequenceRunning) return
+
+    ;(room as any).sequenceRunning = true
+    room.totalPhotos = SHOT_COUNT
+    room.photos = []
+    io.to(code).emit('session-started', { room: getRoomInfo(room) })
+
+    for (let shot = 1; shot <= SHOT_COUNT; shot++) {
+      if (!rooms.has(code)) break
+      room.status = 'countdown'
+      room.currentPhoto = shot
+      const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
+      io.to(code).emit('countdown-start', {
+        count: COUNTDOWN_SECS, photo: shot, total: SHOT_COUNT, prompt,
+      })
+      await sleep(COUNTDOWN_SECS * 1000 + 300)
+      if (!rooms.has(code)) break
+      room.status = 'capturing'
+      io.to(code).emit('capture-now', { photo: shot, total: SHOT_COUNT })
+      await sleep(2200)
     }
 
-    room.status = 'countdown'
-    room.currentPhoto = 1
-    const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
-    io.to(code).emit('session-started', { room: getRoomInfo(room), prompt })
+    if (rooms.has(code)) {
+      room.status = 'review'
+      io.to(code).emit('session-review', { room: getRoomInfo(room) })
+    }
+    ;(room as any).sequenceRunning = false
   })
 
   socket.on('start-countdown', () => {

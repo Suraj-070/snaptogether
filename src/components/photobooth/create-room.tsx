@@ -91,7 +91,6 @@ export default function CreateRoomView() {
     setView, setRoomCode, setIsCreator, setSessionId,
     selectedFilter, setSelectedFilter,
     stripLayout, setStripLayout,
-    totalPhotos, setTotalPhotos,
     setRoomState, setParticipants,
   } = useAppStore()
 
@@ -161,7 +160,6 @@ export default function CreateRoomView() {
         username: username.trim(),
         theme: selectedTheme,
         filter: selectedFilter,
-        totalPhotos,
       })
     }
 
@@ -262,28 +260,6 @@ export default function CreateRoomView() {
                     <LayoutPreview id={layout.id} />
                   </div>
                   <span className="text-sm font-medium">{layout.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Photo Count */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4">
-              Photos per session: <span className="text-primary">{totalPhotos}</span>
-            </h3>
-            <div className="flex gap-3">
-              {[2, 3, 4, 6].map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setTotalPhotos(n)}
-                  className={`w-14 h-14 rounded-xl text-lg font-bold transition-all duration-200 ${
-                    totalPhotos === n
-                      ? 'bg-primary text-primary-foreground shadow-md'
-                      : 'glass hover:shadow-md'
-                  }`}
-                >
-                  {n}
                 </button>
               ))}
             </div>

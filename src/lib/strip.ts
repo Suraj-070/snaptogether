@@ -15,12 +15,23 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
   const padding = 24
   const gap = 12
   const photoW = 400
-  const photoH = 300
   const headerH = 80
   const footerH = 60
 
+  // Load first — slot heights follow each photo's own aspect ratio so
+  // nothing gets cropped or zoomed.
+  const loadImage = (src: string) =>
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = reject
+      img.src = src
+    })
+  const loadedImages = await Promise.all(photos.map((p) => loadImage(p.dataUrl)))
+  const heights = loadedImages.map(img => Math.round(photoW * (img.naturalHeight / img.naturalWidth)))
+
   stripCanvas.width = photoW + padding * 2
-  stripCanvas.height = headerH + (photoH + gap) * photos.length + footerH
+  stripCanvas.height = headerH + heights.reduce((a, b) => a + b + gap, 0) + footerH
 
   // Background
   ctx.fillStyle = '#faf9f7'
@@ -45,21 +56,11 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
     58,
   )
 
-  // Load every photo first — drawing a data URL into an <img> is async.
-  const loadImage = (src: string) =>
-    new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image()
-      img.onload = () => resolve(img)
-      img.onerror = reject
-      img.src = src
-    })
-
-  const loadedImages = await Promise.all(photos.map((p) => loadImage(p.dataUrl)))
-
-  // Photos — crop-to-fill so faces don't get squished.
+  // Draw full frames — rounded corners, no cropping.
+  let y = headerH
   photos.forEach((_photo, i) => {
     const img = loadedImages[i]
-    const y = headerH + i * (photoH + gap)
+    const photoH = heights[i]
 
     const r = 8
     ctx.save()
@@ -75,19 +76,7 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
     ctx.quadraticCurveTo(padding, y, padding + r, y)
     ctx.closePath()
     ctx.clip()
-
-    const srcRatio = img.naturalWidth / img.naturalHeight
-    const dstRatio = photoW / photoH
-    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight
-    if (srcRatio > dstRatio) {
-      sw = img.naturalHeight * dstRatio
-      sx = (img.naturalWidth - sw) / 2
-    } else {
-      sh = img.naturalWidth / dstRatio
-      sy = (img.naturalHeight - sh) / 2
-    }
-
-    ctx.drawImage(img, sx, sy, sw, sh, padding, y, photoW, photoH)
+    ctx.drawImage(img, padding, y, photoW, photoH)
     ctx.restore()
 
     // Photo number
@@ -97,6 +86,8 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
     ctx.font = 'bold 12px system-ui, sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText(`${i + 1}`, padding + photoW - 22, y + 24)
+
+    y += photoH + gap
   })
 
   // Footer

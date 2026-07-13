@@ -16,11 +16,11 @@ import type { CapturedPhoto } from '@/lib/types'
  */
 export default function StripBuilderView() {
   const {
-    capturedPhotos, totalPhotos,
-    setFinalStripData, setAiCaption, setView,
+    capturedPhotos, setFinalStripData, setAiCaption, setView,
   } = useAppStore()
 
-  const slotCount = Math.min(totalPhotos, Math.max(capturedPhotos.length, 1))
+  // 6 shots taken, best 4 make the strip
+  const slotCount = Math.min(4, Math.max(capturedPhotos.length, 1))
   const [slots, setSlots] = useState<(CapturedPhoto | null)[]>(
     () => Array(slotCount).fill(null)
   )
@@ -120,7 +120,7 @@ export default function StripBuilderView() {
             <p className="text-xs text-neutral-400 mb-3">
               Tap a photo to add it to the strip · {pool.length} available
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 content-start">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 content-start">
               <AnimatePresence>
                 {pool.sort((a, b) => a.order - b.order).map((p) => (
                   <motion.button
@@ -131,9 +131,9 @@ export default function StripBuilderView() {
                     exit={{ opacity: 0, scale: 0.85 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={() => addToStrip(p)}
-                    className="relative aspect-[4/3] rounded-xl overflow-hidden shadow-sm ring-1 ring-black/5 hover:ring-2 hover:ring-primary/50 transition-shadow"
+                    className="relative rounded-xl overflow-hidden shadow-sm ring-1 ring-black/5 hover:ring-2 hover:ring-primary/50 transition-shadow"
                   >
-                    <img src={p.dataUrl} alt="" className="w-full h-full object-cover" />
+                    <img src={p.dataUrl} alt="" className="w-full h-auto block" />
                   </motion.button>
                 ))}
               </AnimatePresence>
@@ -154,15 +154,15 @@ export default function StripBuilderView() {
                     {slot ? (
                       <button
                         onClick={() => removeFromSlot(i)}
-                        className="group relative block w-full aspect-[4/3] rounded-sm overflow-hidden"
+                        className="group relative block w-full rounded-sm overflow-hidden"
                       >
-                        <img src={slot.dataUrl} alt="" className="w-full h-full object-cover" />
+                        <img src={slot.dataUrl} alt="" className="w-full h-auto block" />
                         <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
                           <X className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                         </span>
                       </button>
                     ) : (
-                      <div className="w-full aspect-[4/3] rounded-sm bg-[#e6ddcf] flex items-center justify-center">
+                      <div className="w-full aspect-[8/3] rounded-sm bg-[#e6ddcf] flex items-center justify-center">
                         <Plus className="w-5 h-5 text-neutral-400" />
                       </div>
                     )}
