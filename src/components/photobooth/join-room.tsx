@@ -33,6 +33,7 @@ export default function JoinRoomView() {
       setParticipants(roomData.participants || [])
       setIsJoining(false)
       setView('lobby')
+      clearTimeout(deadline)
       socket.off('room-joined', onRoomJoined)
       socket.off('error', onSocketError)
 
@@ -55,9 +56,16 @@ export default function JoinRoomView() {
     const onSocketError = (err: any) => {
       toast.error(err.message || 'Failed to join room')
       setIsJoining(false)
+      clearTimeout(deadline)
       socket.off('room-joined', onRoomJoined)
       socket.off('error', onSocketError)
     }
+
+    // Fail fast if the socket server is unreachable (e.g. env var missing
+    // on the deployed site) instead of spinning forever.
+    const deadline = setTimeout(() => {
+      onSocketError({ message: 'Could not reach the live server. Check your connection and try again.' })
+    }, 10000)
 
     socket.on('room-joined', onRoomJoined)
     socket.on('error', onSocketError)

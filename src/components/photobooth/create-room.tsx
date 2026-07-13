@@ -114,6 +114,7 @@ export default function CreateRoomView() {
       setIsCreator(true)
       setIsCreating(false)
       setView('lobby')
+      clearTimeout(deadline)
       socket.off('room-created', onRoomCreated)
       socket.off('error', onSocketError)
 
@@ -141,9 +142,16 @@ export default function CreateRoomView() {
     const onSocketError = (err: any) => {
       toast.error(err.message || 'Connection error')
       setIsCreating(false)
+      clearTimeout(deadline)
       socket.off('room-created', onRoomCreated)
       socket.off('error', onSocketError)
     }
+
+    // Fail fast if the socket server is unreachable (e.g. env var missing
+    // on the deployed site) instead of spinning forever.
+    const deadline = setTimeout(() => {
+      onSocketError({ message: 'Could not reach the live server. Check your connection and try again.' })
+    }, 10000)
 
     socket.on('room-created', onRoomCreated)
     socket.on('error', onSocketError)

@@ -305,7 +305,7 @@ io.on('connection', (socket) => {
   })
 })
 
-const PORT = 3004
+const PORT = Number(process.env.PORT) || 3004
 httpServer.listen(PORT, () => {
   console.log(`Photobooth WebSocket service running on port ${PORT}`)
 })

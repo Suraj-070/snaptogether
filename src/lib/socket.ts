@@ -24,6 +24,8 @@ export function getSocket(): Socket {
       path: '/',
       transports: ['websocket', 'polling'],
       autoConnect: false,
+      timeout: 8000,           // give up a connection attempt after 8s
+      reconnectionAttempts: 3, // don't retry forever in the background
     })
   }
   return socket
