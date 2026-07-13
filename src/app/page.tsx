@@ -6,6 +6,7 @@ import LandingView from '@/components/photobooth/landing'
 import CreateRoomView from '@/components/photobooth/create-room'
 import JoinRoomView from '@/components/photobooth/join-room'
 import LobbyView from '@/components/photobooth/lobby'
+import StripBuilderView from '@/components/photobooth/strip-builder'
 import StudioView from '@/components/photobooth/studio'
 import ResultView from '@/components/photobooth/result-view'
 import GalleryView from '@/components/photobooth/gallery'
@@ -34,6 +35,7 @@ export default function Home() {
         {view === 'create' && <CreateRoomView />}
         {view === 'join' && <JoinRoomView />}
         {view === 'lobby' && <LobbyView />}
+        {view === 'stripBuilder' && <StripBuilderView />}
         {view === 'studio' && <StudioView />}
         {view === 'result' && <ResultView />}
         {view === 'gallery' && <GalleryView />}

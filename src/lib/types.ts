@@ -22,6 +22,7 @@ export type AppView =
   | 'join'
   | 'lobby'
   | 'studio'
+  | 'stripBuilder'
   | 'result'
   | 'gallery'
   | 'profile'

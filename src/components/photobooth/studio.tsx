@@ -27,7 +27,6 @@ export default function StudioView() {
     selectedFilter, setSelectedFilter,
     totalPhotos, capturedPhotos, addPhoto,
     setView, setRoomState, setParticipants,
-    setFinalStripData, setAiCaption,
     stripLayout, reactions, addReaction,
   } = useAppStore()
 
@@ -43,7 +42,6 @@ export default function StudioView() {
   const [currentCapture, setCurrentCapture] = useState(1)
   const [flashActive, setFlashActive] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showFilterPanel, setShowFilterPanel] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [allReady, setAllReady] = useState(false)
@@ -252,6 +250,8 @@ export default function StudioView() {
     }
   }, [remoteStream])
 
+  const partnerName = participants.find(p => p.username !== username)?.username || 'partner'
+
   const capturePhoto = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return
 
@@ -375,131 +375,6 @@ export default function StudioView() {
     socketRef.current?.emit('send-reaction', { emoji })
   }
 
-  const handleGenerateStrip = async () => {
-    const photos = capturedPhotos.sort((a, b) => a.order - b.order)
-    if (photos.length === 0) return
-
-    const stripCanvas = document.createElement('canvas')
-    const ctx = stripCanvas.getContext('2d')
-    if (!ctx) return
-
-    const padding = 24
-    const gap = 12
-    const photoW = 400
-    const photoH = 300
-    const headerH = 80
-    const footerH = 60
-
-    stripCanvas.width = photoW + padding * 2
-    stripCanvas.height = headerH + (photoH + gap) * photos.length + footerH
-
-    // Background
-    ctx.fillStyle = '#faf9f7'
-    ctx.fillRect(0, 0, stripCanvas.width, stripCanvas.height)
-
-    // Border
-    ctx.strokeStyle = '#e5e2de'
-    ctx.lineWidth = 2
-    ctx.strokeRect(1, 1, stripCanvas.width - 2, stripCanvas.height - 2)
-
-    // Header
-    ctx.fillStyle = '#333'
-    ctx.font = 'bold 18px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('SnapTogether', stripCanvas.width / 2, 35)
-
-    ctx.fillStyle = '#999'
-    ctx.font = '12px system-ui, sans-serif'
-    ctx.fillText(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), stripCanvas.width / 2, 58)
-
-    // Load every photo first — drawing a data URL into an <img> is async,
-    // so we must wait for each to actually decode before drawImage runs.
-    // Skipping this wait is why only whichever photo happened to already
-    // be cached (usually just the last one) ever showed up in the strip.
-    const loadImage = (src: string) =>
-      new Promise<HTMLImageElement>((resolve, reject) => {
-        const img = new Image()
-        img.onload = () => resolve(img)
-        img.onerror = reject
-        img.src = src
-      })
-
-    const loadedImages = await Promise.all(photos.map((p) => loadImage(p.dataUrl)))
-
-    // Photos — crop-to-fill (like CSS object-fit: cover) instead of
-    // stretching, so faces don't get squished into the fixed frame size.
-    photos.forEach((photo, i) => {
-      const img = loadedImages[i]
-      const y = headerH + i * (photoH + gap)
-
-      // Rounded rect clip
-      const r = 8
-      ctx.save()
-      ctx.beginPath()
-      ctx.moveTo(padding + r, y)
-      ctx.lineTo(padding + photoW - r, y)
-      ctx.quadraticCurveTo(padding + photoW, y, padding + photoW, y + r)
-      ctx.lineTo(padding + photoW, y + photoH - r)
-      ctx.quadraticCurveTo(padding + photoW, y + photoH, padding + photoW - r, y + photoH)
-      ctx.lineTo(padding + r, y + photoH)
-      ctx.quadraticCurveTo(padding, y + photoH, padding, y + photoH - r)
-      ctx.lineTo(padding, y + r)
-      ctx.quadraticCurveTo(padding, y, padding + r, y)
-      ctx.closePath()
-      ctx.clip()
-
-      // Compute a source crop rect that fills the destination box while
-      // preserving the image's own aspect ratio.
-      const srcRatio = img.naturalWidth / img.naturalHeight
-      const dstRatio = photoW / photoH
-      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight
-      if (srcRatio > dstRatio) {
-        // source is wider than destination — crop the sides
-        sw = img.naturalHeight * dstRatio
-        sx = (img.naturalWidth - sw) / 2
-      } else {
-        // source is taller than destination — crop top/bottom
-        sh = img.naturalWidth / dstRatio
-        sy = (img.naturalHeight - sh) / 2
-      }
-
-      ctx.drawImage(img, sx, sy, sw, sh, padding, y, photoW, photoH)
-      ctx.restore()
-
-      // Photo number
-      ctx.fillStyle = 'rgba(0,0,0,0.4)'
-      ctx.fillRect(padding + photoW - 36, y + 8, 28, 22)
-      ctx.fillStyle = '#fff'
-      ctx.font = 'bold 12px system-ui, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText(`${i + 1}`, padding + photoW - 22, y + 24)
-    })
-
-    // Footer
-    const footerY = stripCanvas.height - 40
-    ctx.fillStyle = '#bbb'
-    ctx.font = '10px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText(`${photos.length} memories captured together`, stripCanvas.width / 2, footerY)
-
-    const stripData = stripCanvas.toDataURL('image/jpeg', 0.9)
-    setFinalStripData(stripData)
-
-    // Get AI caption
-    try {
-      const captionRes = await fetch('/api/ai/caption', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'caption', context: `${photos.length} photos in a photobooth session` }),
-      })
-      const captionData = await captionRes.json()
-      setAiCaption(captionData.caption)
-    } catch {
-      setAiCaption('A moment worth remembering ✨')
-    }
-
-    setView('result')
-  }
 
   const handleRetake = (order: number) => {
     // In review, allow individual retake
@@ -542,72 +417,123 @@ export default function StudioView() {
 
       {/* Main Camera Area */}
       <div className="flex-1 flex items-center justify-center pt-14 pb-24 relative">
-        {/* Camera Preview — splits into a live duo view when partner connects */}
-        <div className={`relative w-full mx-auto px-4 ${remoteStream ? 'max-w-5xl' : 'max-w-2xl'}`}>
-          {/* Participant chips — compact, never covers the video */}
-          {participants.length > 1 && (
-            <div className="flex items-center justify-center gap-2 mb-3 flex-wrap">
-              {participants.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10"
-                >
-                  <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[9px] font-bold text-white">
-                    {p.username.charAt(0).toUpperCase()}
+        {/* Camera — Instagram-call style fused split frame */}
+        <div className={`relative w-full mx-auto px-4 ${participants.length > 1 ? 'max-w-4xl' : 'max-w-2xl'}`}>
+          <div className={`relative rounded-3xl overflow-hidden bg-neutral-900 shadow-2xl ring-1 ring-white/10 ${
+            participants.length > 1 ? 'aspect-[16/9] sm:aspect-[2/1]' : 'aspect-[4/3]'
+          }`}>
+            <div className="flex h-full">
+              {/* You */}
+              <div className={`relative h-full ${participants.length > 1 ? 'w-1/2' : 'w-full'}`}>
+                {cameraError ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 p-6 text-center">
+                    <Camera className="w-10 h-10 mb-3 opacity-50" />
+                    <p className="text-xs sm:text-sm max-w-xs mb-4">{cameraError}</p>
+                    <Button
+                      variant="outline"
+                      onClick={() => setCameraAttempt(a => a + 1)}
+                      className="rounded-xl bg-white/10 border-white/20 text-white hover:bg-white/20"
+                    >
+                      Retry Camera
+                    </Button>
                   </div>
-                  <span className="text-xs text-white/85 max-w-[90px] truncate">{p.username}</span>
-                  <span className={`w-1.5 h-1.5 rounded-full ${p.isReady ? 'bg-green-400' : 'bg-white/30'}`} />
+                ) : (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${mirrored ? 'scale-x-[-1]' : ''}`}
+                    style={{ filter: filterCss || undefined }}
+                  />
+                )}
+                <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-10 px-3 py-1 rounded-full bg-black/45 backdrop-blur-md text-white text-[11px] font-semibold whitespace-nowrap">
+                  {username || 'You'}
                 </div>
-              ))}
-              {phase === 'setup' && (
-                <span className="text-[11px] text-white/50">
-                  {participants.filter(p => p.isReady).length}/{participants.length} ready
-                </span>
+              </div>
+
+              {/* Partner half */}
+              {participants.length > 1 && (
+                <div className="relative h-full w-1/2 border-l border-white/15 bg-neutral-950">
+                  {remoteStream ? (
+                    <video
+                      ref={remoteVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                      style={{ filter: filterCss || undefined }}
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center p-6">
+                      <p className="text-sm text-white/60 text-center">
+                        waiting for {partnerName}&apos;s camera
+                        <motion.span
+                          animate={{ opacity: [0.2, 1, 0.2] }}
+                          transition={{ duration: 1.4, repeat: Infinity }}
+                        >...</motion.span>
+                      </p>
+                    </div>
+                  )}
+                  <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-10 px-3 py-1 rounded-full bg-primary text-primary-foreground text-[11px] font-semibold whitespace-nowrap max-w-[85%] truncate">
+                    {partnerName}
+                  </div>
+                  {remoteStream && (
+                    <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/45 backdrop-blur-md">
+                      <span className={`w-1.5 h-1.5 rounded-full ${peerConnected ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
+                      <span className="text-[9px] font-semibold tracking-wider text-white/80">LIVE</span>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          )}
-          <div className={`grid gap-3 ${remoteStream ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
-          <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 shadow-2xl ring-1 ring-white/10">
-            {/* name badge */}
-            <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs font-medium">
-              {username || 'You'} <span className="text-white/50">(you)</span>
-            </div>
-            {cameraError ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 p-8 text-center">
-                <Camera className="w-12 h-12 mb-4 opacity-50" />
-                <p className="text-sm max-w-xs mb-5">{cameraError}</p>
-                <Button
-                  variant="outline"
-                  onClick={() => setCameraAttempt(a => a + 1)}
-                  className="rounded-xl bg-white/10 border-white/20 text-white hover:bg-white/20"
-                >
-                  Retry Camera
-                </Button>
+
+            {/* Filter circles — IG-style row overlaying the frame bottom */}
+            {phase === 'setup' && !cameraError && (
+              <div className="absolute bottom-10 left-0 right-0 z-20 px-3">
+                <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-center py-1">
+                  {FILTERS.map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
+                      className="shrink-0 flex flex-col items-center gap-1"
+                    >
+                      <span className={`block w-12 h-12 rounded-full overflow-hidden transition-all duration-200 ${
+                        selectedFilter === f.id
+                          ? 'ring-[2.5px] ring-white scale-110 shadow-lg'
+                          : 'ring-1 ring-white/25 opacity-80 hover:opacity-100'
+                      }`}>
+                        {f.id === 'none' ? (
+                          <span className="w-full h-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white text-lg">✕</span>
+                        ) : (
+                          <span
+                            className="block w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300"
+                            style={{ filter: f.css || undefined }}
+                          />
+                        )}
+                      </span>
+                      {selectedFilter === f.id && (
+                        <span className="text-[9px] font-medium text-white drop-shadow">{f.name}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className={`w-full h-full object-cover ${mirrored ? 'scale-x-[-1]' : ''}`}
-                style={{ filter: filterCss || undefined }}
-              />
             )}
 
-            {/* Flash Overlay */}
+            {/* Flash Overlay — whole frame */}
             <AnimatePresence>
               {flashActive && (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="absolute inset-0 bg-white animate-camera-flash pointer-events-none"
+                  className="absolute inset-0 bg-white animate-camera-flash pointer-events-none z-30"
                 />
               )}
             </AnimatePresence>
 
-            {/* Countdown Overlay */}
+            {/* Countdown Overlay — whole frame */}
             <AnimatePresence>
               {countdown !== null && countdown > 0 && (
                 <motion.div
@@ -616,7 +542,7 @@ export default function StudioView() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.5 }}
                   transition={{ duration: 0.3 }}
-                  className="absolute inset-0 flex items-center justify-center bg-black/30"
+                  className="absolute inset-0 flex items-center justify-center bg-black/30 z-30"
                 >
                   <div className="animate-countdown text-9xl font-bold text-white drop-shadow-2xl">
                     {countdown}
@@ -627,7 +553,7 @@ export default function StudioView() {
 
             {/* Photo Progress */}
             {(phase === 'capture' || phase === 'countdown') && (
-              <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
+              <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20">
                 <div className="bg-black/50 backdrop-blur-md rounded-full px-4 py-2 text-sm text-white font-medium">
                   Photo {currentCapture} / {totalPhotos}
                 </div>
@@ -648,38 +574,27 @@ export default function StudioView() {
 
             {/* Captured Thumbnails */}
             {capturedPhotos.length > 0 && phase !== 'review' && (
-              <div className="absolute bottom-4 left-4 flex gap-2">
+              <div className="absolute top-4 left-4 flex gap-2 z-20">
                 {capturedPhotos.sort((a, b) => a.order - b.order).map((p) => (
-                  <div key={p.id} className="w-14 h-14 rounded-lg overflow-hidden border-2 border-white/40 shadow-lg">
+                  <div key={p.id} className="w-12 h-12 rounded-lg overflow-hidden border-2 border-white/40 shadow-lg">
                     <img src={p.dataUrl} alt="" className="w-full h-full object-cover" />
                   </div>
                 ))}
               </div>
             )}
-
           </div>
 
-          {/* Partner live tile */}
-          {remoteStream && (
-            <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 shadow-2xl ring-1 ring-white/10">
-              <video
-                ref={remoteVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-                style={{ filter: filterCss || undefined }}
-              />
-              <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md text-white text-xs font-medium">
-                {participants.find(p => p.username !== username)?.username || 'Partner'}
-              </div>
-              <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/50 backdrop-blur-md">
-                <span className={`w-2 h-2 rounded-full ${peerConnected ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
-                <span className="text-[10px] font-semibold tracking-wider text-white/80">LIVE</span>
-              </div>
+          {/* Ready status — slim, under the frame */}
+          {phase === 'setup' && participants.length > 1 && (
+            <div className="flex items-center justify-center gap-2 mt-3">
+              {participants.map((p) => (
+                <div key={p.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 backdrop-blur-md">
+                  <span className={`w-1.5 h-1.5 rounded-full ${p.isReady ? 'bg-green-400' : 'bg-white/30'}`} />
+                  <span className="text-[11px] text-white/85 max-w-[90px] truncate">{p.username}</span>
+                </div>
+              ))}
             </div>
           )}
-          </div>
         </div>
 
         {/* Floating Reactions */}
@@ -735,16 +650,6 @@ export default function StudioView() {
                   exit={{ opacity: 0, y: 10 }}
                   className="flex items-center gap-3"
                 >
-                  {/* Filter Toggle */}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setShowFilterPanel(!showFilterPanel)}
-                    className={`rounded-xl shrink-0 ${showFilterPanel ? 'bg-white/20 text-white' : 'text-white/70 hover:text-white'}`}
-                  >
-                    <Sparkles className="w-5 h-5" />
-                  </Button>
-
                   {/* Mirror Toggle */}
                   <Button
                     variant="ghost"
@@ -840,11 +745,11 @@ export default function StudioView() {
                     </Button>
                     <Button
                       size="lg"
-                      onClick={handleGenerateStrip}
+                      onClick={() => setView('stripBuilder')}
                       className="flex-[2] rounded-2xl py-5 bg-primary hover:bg-primary/90 text-primary-foreground"
                     >
                       <Sparkles className="w-4 h-4 mr-2" />
-                      Generate Photo Strip
+                      Make Your Strip
                     </Button>
                   </div>
                 </motion.div>
@@ -853,44 +758,6 @@ export default function StudioView() {
           </div>
         </div>
 
-        {/* Filter Panel */}
-        <AnimatePresence>
-          {showFilterPanel && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              className="bg-black/70 backdrop-blur-xl border-t border-white/10 p-4"
-            >
-              <div className="max-w-2xl mx-auto">
-                <h4 className="text-white/70 text-xs font-medium mb-3 uppercase tracking-wider">Filters</h4>
-                <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-                  {FILTERS.map((filter) => (
-                    <button
-                      key={filter.id}
-                      onClick={() => { setSelectedFilter(filter.id as FilterId); socketRef.current?.emit('update-settings', { filter: filter.id }) }}
-                      className={`shrink-0 w-20 rounded-xl overflow-hidden transition-all duration-200 ${
-                        selectedFilter === filter.id ? 'ring-2 ring-primary scale-105' : 'opacity-70 hover:opacity-100'
-                      }`}
-                    >
-                      <div
-                        className="aspect-square relative"
-                        style={{ filter: filter.css || undefined }}
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300" />
-                        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-emerald-600/70 to-transparent" />
-                        <div className="absolute top-2 right-2.5 w-4 h-4 rounded-full bg-yellow-100" />
-                      </div>
-                      <div className="py-1.5 px-1 text-center">
-                        <span className="text-[10px] text-white/80 font-medium">{filter.name}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
       {/* Hidden Canvas for capture */}
