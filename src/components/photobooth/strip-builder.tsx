@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Sparkles, ArrowLeft, X } from 'lucide-react'
@@ -18,28 +18,20 @@ export default function StripBuilderView() {
   const slotCount = Math.min(4, Math.max(capturedPhotos.length, 1))
   const [isBuilding, setIsBuilding] = useState(false)
 
-  // FIX: always keep correct number of slots.
-  // Initialize with slotCount so we never freeze at 1.
-  const [slots, setSlots] = useState<(CapturedPhoto | null)[]>(
+  // Raw slot state — may be shorter than slotCount if photos hydrated after mount.
+  // We never shrink rawSlots; only grow it.
+  const [rawSlots, setRawSlots] = useState<(CapturedPhoto | null)[]>(
     () => Array(slotCount).fill(null)
   )
 
-  // Grow/shrink slot array to match slotCount without any effect or ref.
-  // If length already matches, updater returns same reference → no re-render.
-  const currentSlots: (CapturedPhoto | null)[] =
-    slots.length === slotCount
-      ? slots
-      : (() => {
-          const next: (CapturedPhoto | null)[] = Array(slotCount).fill(null)
-          slots.forEach((s, i) => { if (i < slotCount) next[i] = s })
-          return next
-        })()
-
-  // Sync state when derived array differs (length changed between renders).
-  // useState setter is stable so this is safe to call during render.
-  if (currentSlots !== slots) {
-    setSlots(currentSlots)
-  }
+  // Derived slots — always exactly slotCount long, no setState during render.
+  // useMemo keeps the same array reference when nothing changed.
+  const slots = useMemo<(CapturedPhoto | null)[]>(() => {
+    if (rawSlots.length === slotCount) return rawSlots
+    const next: (CapturedPhoto | null)[] = Array(slotCount).fill(null)
+    rawSlots.forEach((s, i) => { if (i < slotCount) next[i] = s })
+    return next
+  }, [rawSlots, slotCount])
 
   // --- Collaborative editing ---
   const applyingRemote = useRef(false)
@@ -49,8 +41,8 @@ export default function StripBuilderView() {
     const socket = getSocket()
     const onRemoteSlots = (data: { slots: (number | null)[] }) => {
       applyingRemote.current = true
-      setSlots(prev => {
-        const len = Math.max(prev.length, data.slots.length)
+      setRawSlots(() => {
+        const len = Math.max(slotCount, data.slots.length)
         return Array.from({ length: len }, (_, i) => {
           const o = data.slots[i]
           return o == null ? null : capturedPhotos.find(p => p.order === o) ?? null
@@ -60,34 +52,38 @@ export default function StripBuilderView() {
     }
     socket.on('strip-slot-update', onRemoteSlots)
     return () => { socket.off('strip-slot-update', onRemoteSlots) }
-  }, [capturedPhotos])
+  }, [capturedPhotos, slotCount])
 
   useEffect(() => {
-    // Skip initial broadcast — would send all-null and wipe partner's slots
+    // Skip first render — don't broadcast empty state and wipe partner's slots
     if (!didMount.current) { didMount.current = true; return }
     if (applyingRemote.current) return
-    getSocket().emit('strip-slot-update', { slots: currentSlots.map(s => s?.order ?? null) })
-  }, [currentSlots])
+    getSocket().emit('strip-slot-update', { slots: slots.map(s => s?.order ?? null) })
+  }, [slots])
 
-  const usedIds = new Set(currentSlots.filter(Boolean).map(p => p!.id))
+  const usedIds = new Set(slots.filter(Boolean).map(p => p!.id))
   const pool = capturedPhotos.filter(p => !usedIds.has(p.id))
-  const filledCount = currentSlots.filter(Boolean).length
+  const filledCount = slots.filter(Boolean).length
 
   const addToStrip = (photo: CapturedPhoto) => {
-    const idx = currentSlots.findIndex(s => s === null)
+    const idx = slots.findIndex(s => s === null)
     if (idx === -1) {
       toast('Strip is full — remove one first')
       return
     }
-    setSlots(prev => prev.map((s, i) => (i === idx ? photo : s)))
+    setRawSlots(prev => {
+      const base = prev.length === slotCount ? [...prev] : Array(slotCount).fill(null).map((_, i) => prev[i] ?? null)
+      base[idx] = photo
+      return base
+    })
   }
 
   const removeFromSlot = (idx: number) => {
-    setSlots(prev => prev.map((s, i) => (i === idx ? null : s)))
+    setRawSlots(prev => prev.map((s, i) => (i === idx ? null : s)))
   }
 
   const handleCreate = async () => {
-    const chosen = currentSlots.filter(Boolean) as CapturedPhoto[]
+    const chosen = slots.filter(Boolean) as CapturedPhoto[]
     if (chosen.length === 0) return
     setIsBuilding(true)
 
@@ -112,7 +108,7 @@ export default function StripBuilderView() {
 
   const autoFill = () => {
     const ordered = [...capturedPhotos].sort((a, b) => a.order - b.order)
-    setSlots(ordered.slice(0, slotCount))
+    setRawSlots(ordered.slice(0, slotCount))
   }
 
   return (
@@ -134,6 +130,7 @@ export default function StripBuilderView() {
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 pb-32 pt-2">
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_minmax(260px,320px)] gap-6">
+          {/* Photo pool */}
           <div>
             <p className="text-xs text-neutral-400 mb-3">
               Tap a photo to add it to the strip · {pool.length} available
@@ -163,10 +160,11 @@ export default function StripBuilderView() {
             </div>
           </div>
 
+          {/* Strip preview */}
           <div className="mx-auto w-full max-w-[320px]">
             <div className="strip-frame bg-[#efe9df] rounded-lg p-3 shadow-md ring-1 ring-black/5">
               <div className="space-y-2.5">
-                {currentSlots.map((slot, i) => (
+                {slots.map((slot, i) => (
                   <motion.div key={i} layout className="relative">
                     {slot ? (
                       <button
@@ -211,7 +209,7 @@ export default function StripBuilderView() {
             ) : (
               <>
                 <Sparkles className="w-5 h-5 mr-2" />
-                Create Strip ({filledCount}/{currentSlots.length})
+                Create Strip ({filledCount}/{slots.length})
               </>
             )}
           </Button>

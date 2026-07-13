@@ -120,6 +120,12 @@ export default function StudioView() {
 
     socket.on('settings-updated', (data: any) => {
       setRoomState(data.room)
+      // Sync filter to partner — partner's filter change arrives here
+      if (data.room?.filter && data.room.filter !== 'none') {
+        setSelectedFilter(data.room.filter as FilterId)
+      } else if (data.room?.filter === 'none') {
+        setSelectedFilter('none')
+      }
     })
 
     socket.on('session-started', (data: any) => {
@@ -292,6 +298,10 @@ export default function StudioView() {
     const remote = remoteVideoRef.current
     const hasRemote = !!(remote && remoteStream && remote.videoWidth > 0)
 
+    // Bake the selected CSS filter into canvas pixels so it appears in the
+    // saved photo, not just the live preview. ctx.filter mirrors CSS filter.
+    const filterCssValue = getFilterCss(selectedFilter) || 'none'
+
     if (hasRemote) {
       const h = Math.min(video.videoHeight, remote!.videoHeight) || 720
       const wL = Math.round(h * (video.videoWidth / video.videoHeight))
@@ -299,6 +309,7 @@ export default function StudioView() {
       canvas.width = wL + wR
       canvas.height = h
 
+      ctx.filter = filterCssValue
       ctx.save()
       if (mirrored) {
         ctx.translate(wL, 0)
@@ -309,6 +320,7 @@ export default function StudioView() {
       }
       ctx.restore()
       ctx.drawImage(remote!, wL, 0, wR, h)
+      ctx.filter = 'none'
 
       ctx.fillStyle = 'rgba(255,255,255,0.6)'
       ctx.fillRect(wL - 1, 0, 2, h)
@@ -316,11 +328,13 @@ export default function StudioView() {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
 
+      ctx.filter = filterCssValue
       if (mirrored) {
         ctx.translate(canvas.width, 0)
         ctx.scale(-1, 1)
       }
       ctx.drawImage(video, 0, 0)
+      ctx.filter = 'none'
       ctx.setTransform(1, 0, 0, 1, 0, 0)
     }
 
@@ -571,35 +585,52 @@ export default function StudioView() {
             )}
           </div>
 
-          {/* Filter row — always below the frame (desktop + mobile) */}
+          {/* Filter row — thumbnail + name, always below frame */}
           {phase === 'setup' && !cameraError && (
             <div className="relative mt-3 z-20 px-1 sm:px-3">
-              <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-center py-1">
-                {FILTERS.map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
-                    className="shrink-0 flex flex-col items-center gap-1"
-                  >
-                    <span className={`block w-12 h-12 rounded-full overflow-hidden transition-all duration-200 ${
-                      selectedFilter === f.id
-                        ? 'ring-[2.5px] ring-white scale-110 shadow-lg'
-                        : 'ring-1 ring-white/25 opacity-80 hover:opacity-100'
-                    }`}>
-                      {f.id === 'none' ? (
-                        <span className="w-full h-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white text-lg">✕</span>
-                      ) : (
-                        <span
-                          className="block w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300"
-                          style={{ filter: f.css || undefined }}
-                        />
-                      )}
-                    </span>
-                    {selectedFilter === f.id && (
-                      <span className="text-[9px] font-medium text-white drop-shadow">{f.name}</span>
-                    )}
-                  </button>
-                ))}
+              <div className="flex gap-3 overflow-x-auto no-scrollbar justify-start sm:justify-center items-end py-2">
+                {FILTERS.map((f) => {
+                  const active = selectedFilter === f.id
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
+                      className="shrink-0 flex flex-col items-center gap-1.5"
+                    >
+                      {/* Thumbnail — live video frame with filter baked via CSS */}
+                      <span className={`relative block w-14 h-14 rounded-xl overflow-hidden transition-all duration-200 ${
+                        active
+                          ? 'ring-2 ring-white scale-110 shadow-xl'
+                          : 'ring-1 ring-white/20 opacity-70 hover:opacity-100 hover:scale-105'
+                      }`}>
+                        {cameraReady ? (
+                          <video
+                            autoPlay
+                            playsInline
+                            muted
+                            className={`w-full h-full object-cover pointer-events-none ${mirrored ? 'scale-x-[-1]' : ''}`}
+                            style={{ filter: f.css || undefined }}
+                            ref={(el) => { if (el && localStream && !el.srcObject) { el.srcObject = localStream } }}
+                          />
+                        ) : (
+                          <span
+                            className="block w-full h-full bg-gradient-to-br from-neutral-600 to-neutral-800"
+                            style={{ filter: f.css || undefined }}
+                          />
+                        )}
+                        {active && (
+                          <span className="absolute inset-0 ring-2 ring-inset ring-white/40 rounded-xl pointer-events-none" />
+                        )}
+                      </span>
+                      {/* Name — always visible */}
+                      <span className={`text-[9px] font-medium drop-shadow whitespace-nowrap ${
+                        active ? 'text-white' : 'text-white/60'
+                      }`}>
+                        {f.name}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )}
