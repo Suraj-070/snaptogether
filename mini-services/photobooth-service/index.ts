@@ -242,6 +242,12 @@ io.on('connection', (socket) => {
   })
 
   // --- WebRTC signaling (relayed to the other peer(s) in the room) ---
+  socket.on('webrtc-ready', () => {
+    const code = socket.data.roomCode
+    if (!code) return
+    socket.to(code).emit('webrtc-ready', { from: socket.id })
+  })
+
   socket.on('webrtc-offer', (data: { sdp: any; to?: string }) => {
     const code = socket.data.roomCode
     if (!code) return

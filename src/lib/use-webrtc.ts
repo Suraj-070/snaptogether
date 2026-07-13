@@ -94,30 +94,33 @@ export function useWebRTC(opts: {
       } catch { /* candidate for a torn-down pc */ }
     }
 
+    // Ready-handshake: a lone timed offer gets lost if the partner's camera
+    // isn't up yet. Instead, both sides announce readiness; the initiator
+    // (re)offers every time it hears the peer is ready.
+    const onPeerReady = (data: { from: string }) => {
+      peerIdRef.current = data.from
+      if (isInitiator) {
+        makeOffer()
+      } else {
+        // reply so an initiator that mounted late still learns we're here
+        socket.emit('webrtc-ready')
+      }
+    }
+
     socket.on('webrtc-offer', onOffer)
     socket.on('webrtc-answer', onAnswer)
     socket.on('webrtc-ice', onIce)
+    socket.on('webrtc-ready', onPeerReady)
 
-    // Creator drives the offer once both cameras/rooms are ready.
-    if (isInitiator) {
-      // small delay lets the joiner attach its listeners first
-      const t = setTimeout(makeOffer, 400)
-      return () => {
-        clearTimeout(t)
-        closed = true
-        socket.off('webrtc-offer', onOffer)
-        socket.off('webrtc-answer', onAnswer)
-        socket.off('webrtc-ice', onIce)
-        pcRef.current?.close()
-        pcRef.current = null
-      }
-    }
+    // Announce our own readiness (stream is guaranteed non-null here).
+    socket.emit('webrtc-ready')
 
     return () => {
       closed = true
       socket.off('webrtc-offer', onOffer)
       socket.off('webrtc-answer', onAnswer)
       socket.off('webrtc-ice', onIce)
+      socket.off('webrtc-ready', onPeerReady)
       pcRef.current?.close()
       pcRef.current = null
     }

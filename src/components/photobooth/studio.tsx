@@ -544,6 +544,28 @@ export default function StudioView() {
       <div className="flex-1 flex items-center justify-center pt-14 pb-24 relative">
         {/* Camera Preview — splits into a live duo view when partner connects */}
         <div className={`relative w-full mx-auto px-4 ${remoteStream ? 'max-w-5xl' : 'max-w-2xl'}`}>
+          {/* Participant chips — compact, never covers the video */}
+          {participants.length > 1 && (
+            <div className="flex items-center justify-center gap-2 mb-3 flex-wrap">
+              {participants.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10"
+                >
+                  <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[9px] font-bold text-white">
+                    {p.username.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-xs text-white/85 max-w-[90px] truncate">{p.username}</span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${p.isReady ? 'bg-green-400' : 'bg-white/30'}`} />
+                </div>
+              ))}
+              {phase === 'setup' && (
+                <span className="text-[11px] text-white/50">
+                  {participants.filter(p => p.isReady).length}/{participants.length} ready
+                </span>
+              )}
+            </div>
+          )}
           <div className={`grid gap-3 ${remoteStream ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
           <div className="relative aspect-[4/3] rounded-3xl overflow-hidden bg-gray-900 shadow-2xl ring-1 ring-white/10">
             {/* name badge */}
@@ -635,32 +657,6 @@ export default function StudioView() {
               </div>
             )}
 
-            {/* Ready indicator */}
-            {phase === 'setup' && participants.length > 1 && (
-              <div className="absolute top-4 left-4 right-4">
-                <div className="bg-black/55 backdrop-blur-md border border-white/10 rounded-xl p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium text-white/80">Participants</span>
-                    <span className="text-xs text-white/60">{participants.filter(p => p.isReady).length}/{participants.length} ready</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {participants.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-[9px] font-bold text-white">
-                          {p.username.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="text-xs text-white/80 flex-1">{p.username}</span>
-                        {p.isReady ? (
-                          <Check className="w-3.5 h-3.5 text-green-400" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full border border-white/30" />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Partner live tile */}
