@@ -5,8 +5,8 @@ const httpServer = createServer()
 const io = new Server(httpServer, {
   path: '/',
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: process.env.CORS_ORIGIN || '*',
+    methods: ['GET', 'POST'],
   },
   pingTimeout: 60000,
   pingInterval: 25000,
@@ -65,12 +65,7 @@ io.on('connection', (socket) => {
   socket.on('create-room', (data: { username: string; theme?: string; filter?: string; code?: string; totalPhotos?: number }) => {
     let code = data.code ? data.code.toUpperCase().trim() : generateRoomCode()
     while (rooms.has(code)) {
-      if (data.code) {
-        // requested code is taken (rare) — fall back to a fresh one
-        code = generateRoomCode()
-      } else {
-        code = generateRoomCode()
-      }
+      code = generateRoomCode()
     }
 
     const participant: Participant = {
@@ -173,18 +168,20 @@ io.on('connection', (socket) => {
     io.to(code).emit('studio-entered', { room: getRoomInfo(room) })
   })
 
-  const SHOT_COUNT = 6
-  const COUNTDOWN_SECS = 5
-  const CAPTURE_LEAD_MS = 600 // clients fire at this many ms after emit — absorbs network jitter
-  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-
-  // Clock sync — lets clients schedule capture at the exact same instant
+  // Clock sync — client pings, server acks with server time so client can
+  // measure its offset and schedule captures at the exact same instant.
   socket.on('time-sync', (_clientTime: number, cb: (serverTime: number) => void) => {
     if (typeof cb === 'function') cb(Date.now())
   })
 
-  // Server drives the whole shoot so both screens stay perfectly in sync:
-  // 6 shots, each = synced 5s countdown -> scheduled capture signal -> short gap.
+  const SHOT_COUNT = 6
+  const COUNTDOWN_SECS = 5
+  const CAPTURE_LEAD_MS = 600 // future timestamp window to absorb network jitter
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+  // Server drives the whole shoot: both screens stay perfectly in sync.
+  // captureAt is an absolute server timestamp that every client converts
+  // via their measured clock offset → fires at the same real-world instant.
   socket.on('start-session', async () => {
     const code = socket.data.roomCode
     if (!code) return
@@ -207,9 +204,11 @@ io.on('connection', (socket) => {
       await sleep(COUNTDOWN_SECS * 1000 + 300)
       if (!rooms.has(code)) break
       room.status = 'capturing'
-      // Both clients calculate: fire at captureAt - serverOffset = same wall-clock moment
+      // captureAt: both clients fire at this exact server-clock instant
       io.to(code).emit('capture-now', {
-        photo: shot, total: SHOT_COUNT, captureAt: Date.now() + CAPTURE_LEAD_MS,
+        photo: shot,
+        total: SHOT_COUNT,
+        captureAt: Date.now() + CAPTURE_LEAD_MS,
       })
       await sleep(CAPTURE_LEAD_MS + 2200)
     }
@@ -220,17 +219,6 @@ io.on('connection', (socket) => {
     }
     ;(room as any).sequenceRunning = false
   })
-
-  // socket.on('start-countdown', () => {
-  //   const code = socket.data.roomCode
-  //   if (!code) return
-  //   const room = rooms.get(code)
-  //   if (!room) return
-
-  //   room.status = 'countdown'
-  //   // const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
-  //   io.to(code).emit('countdown-start', { count: 3, photo: room.currentPhoto, total: room.totalPhotos, prompt })
-  // })
 
   socket.on('photo-captured', (data: { imageData: string; order: number }) => {
     const code = socket.data.roomCode
@@ -275,17 +263,7 @@ io.on('connection', (socket) => {
     })
   })
 
-  socket.on('retake-requested', (data: { order: number }) => {
-    const code = socket.data.roomCode
-    if (!code) return
-    const room = rooms.get(code)
-    if (!room) return
-
-    room.photos = room.photos.filter(p => p.order !== data.order || p.userId !== socket.id)
-    io.to(code).emit('retake-notify', { order: data.order, userId: socket.id })
-  })
-
-  // --- WebRTC signaling (relayed to the other peer(s) in the room) ---
+  // --- WebRTC signaling ---
   socket.on('webrtc-ready', () => {
     const code = socket.data.roomCode
     if (!code) return
@@ -311,7 +289,7 @@ io.on('connection', (socket) => {
     else socket.to(code).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
   })
 
-  // Collaborative strip building — relay slot changes + open signal
+  // Collaborative strip building
   socket.on('strip-open', () => {
     const code = socket.data.roomCode
     if (code) socket.to(code).emit('strip-open')
@@ -362,6 +340,32 @@ io.on('connection', (socket) => {
       })
     }
     console.log(`Disconnected: ${socket.id}`)
+  })
+
+  // --- Collaborative strip editor (drawing + stickers) ---
+  socket.on('strip-draw-start', (data: { x: number; y: number; color: string; size: number; userId: string }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-draw-start', data)
+  })
+  socket.on('strip-draw-move', (data: { x: number; y: number; userId: string }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-draw-move', data)
+  })
+  socket.on('strip-draw-end', (data: { userId: string }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-draw-end', data)
+  })
+  socket.on('strip-sticker-add', (data: { id: string; emoji: string; x: number; y: number; scale: number }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-sticker-add', data)
+  })
+  socket.on('strip-sticker-move', (data: { id: string; x: number; y: number }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-sticker-move', data)
+  })
+  socket.on('strip-clear-drawing', () => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-clear-drawing')
   })
 })
 

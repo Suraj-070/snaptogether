@@ -554,36 +554,46 @@ export default function StudioView() {
 
             {/* Photo Progress */}
             {(phase === 'capture' || phase === 'countdown') && (
-              <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20">
-                <div className="bg-black/50 backdrop-blur-md rounded-full px-4 py-2 text-sm text-white font-medium">
-                  Photo {currentCapture} / {totalPhotos}
-                </div>
-                <div className="flex gap-1.5">
-                  {Array.from({ length: totalPhotos }).map((_, i) => (
-                    <div
-                      key={i}
-                      className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                        i + 1 < currentCapture ? 'bg-green-400' :
-                        i + 1 === currentCapture ? 'bg-white scale-125' :
-                        'bg-white/30'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Captured Thumbnails */}
-            {capturedPhotos.length > 0 && phase !== 'review' && (
-              <div className="absolute top-4 left-4 flex gap-2 z-20">
-                {[...capturedPhotos].sort((a, b) => a.order - b.order).map((p) => (
-                  <div key={p.id} className="w-12 h-12 rounded-lg overflow-hidden border-2 border-white/40 shadow-lg">
-                    <img src={p.dataUrl} alt="" className="w-full h-full object-cover" />
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
+                <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md rounded-full px-4 py-2">
+                  <span className="text-white text-sm font-medium">{currentCapture} / {totalPhotos}</span>
+                  <div className="flex gap-1.5 items-center">
+                    {Array.from({ length: totalPhotos }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-full transition-all duration-300 ${
+                          i + 1 < currentCapture ? 'w-2 h-2 bg-green-400' :
+                          i + 1 === currentCapture ? 'w-3 h-3 bg-white scale-110' :
+                          'w-2 h-2 bg-white/30'
+                        }`}
+                      />
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             )}
           </div>
+
+          {/* Captured filmstrip — below frame, never overlapping */}
+          {capturedPhotos.length > 0 && phase !== 'review' && (
+            <div className="mt-2 px-1">
+              <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                {[...capturedPhotos].sort((a, b) => a.order - b.order).map((p, i) => (
+                  <div
+                    key={p.id}
+                    className="relative shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 border-green-400/60 shadow-lg"
+                  >
+                    <img src={p.dataUrl} alt="" className="w-full h-full object-cover" />
+                    <span className="absolute bottom-0.5 right-0.5 text-[9px] font-bold text-white bg-black/50 rounded px-0.5 leading-none py-0.5">{i + 1}</span>
+                  </div>
+                ))}
+                {/* Empty slots */}
+                {Array.from({ length: Math.max(0, totalPhotos - capturedPhotos.length) }).map((_, i) => (
+                  <div key={`empty-${i}`} className="shrink-0 w-14 h-14 rounded-lg border border-dashed border-white/20 bg-white/5" />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Filter row — thumbnail + name, always below frame */}
           {phase === 'setup' && !cameraError && (

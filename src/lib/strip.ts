@@ -79,14 +79,6 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
     ctx.drawImage(img, padding, y, photoW, photoH)
     ctx.restore()
 
-    // Photo number
-    ctx.fillStyle = 'rgba(0,0,0,0.4)'
-    ctx.fillRect(padding + photoW - 36, y + 8, 28, 22)
-    ctx.fillStyle = '#fff'
-    ctx.font = 'bold 12px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText(`${i + 1}`, padding + photoW - 22, y + 24)
-
     y += photoH + gap
   })
 
