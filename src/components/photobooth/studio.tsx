@@ -4,18 +4,16 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Camera, ArrowLeft, Sparkles, Send, Check, Settings2,
-  ChevronLeft, ChevronRight, Download, Heart, Loader2,
-  ThumbsUp, PartyPopper, Star, Zap, X, Info, FlipHorizontal2,
+  Camera, ArrowLeft, Sparkles,
+  FlipHorizontal2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import type { Socket } from 'socket.io-client'
 import { getSocket, disconnectSocket } from '@/lib/socket'
 import { useWebRTC } from '@/lib/use-webrtc'
-import type { FilterId, CapturedPhoto, Participant, RoomState } from '@/lib/types'
+import type { FilterId, CapturedPhoto } from '@/lib/types'
 import { FILTERS, getFilterCss } from '@/lib/types'
-import type { StripLayout } from '@/lib/types'
 
 const REACTION_EMOJIS = ['❤️', '😂', '😍', '🥰', '🎉', '✨', '🔥', '👏', '💕', '🤩']
 
@@ -27,26 +25,26 @@ export default function StudioView() {
     selectedFilter, setSelectedFilter,
     totalPhotos, capturedPhotos, addPhoto,
     setView, setRoomState, setParticipants,
-    stripLayout, reactions, addReaction,
+    reactions, addReaction,
   } = useAppStore()
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
-  const [posePrompt, setPosePrompt] = useState<string | null>(null)
   const [heartBursts, setHeartBursts] = useState<number[]>([])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const socketRef = useRef<Socket | null>(null)
 
+  // Server-clock offset: serverTime ≈ Date.now() + serverOffset.current
+  const serverOffset = useRef(0)
+
   const [phase, setPhase] = useState<StudioPhase>('setup')
   const [countdown, setCountdown] = useState<number | null>(null)
   const [currentCapture, setCurrentCapture] = useState(1)
   const [flashActive, setFlashActive] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
-  const [allReady, setAllReady] = useState(false)
   const [isReady, setIsReady] = useState(false)
   const [mirrored, setMirrored] = useState(true)
 
@@ -60,13 +58,7 @@ export default function StudioView() {
     const socket: Socket = getSocket()
 
     const joinOrCreate = () => {
-      // If this socket already has an active room (it was created/joined
-      // in the Create Room / Join Room screen right before navigating
-      // here), don't create or join again — that would spin up a second,
-      // disconnected room on the server and orphan the one everyone
-      // already has the code for.
       if (roomState?.code === roomCode) return
-
       if (isCreator) {
         socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: roomCode })
       } else {
@@ -74,10 +66,26 @@ export default function StudioView() {
       }
     }
 
+    // Measure server clock offset (5 pings, keep lowest-RTT sample)
+    const syncClock = () => {
+      let best = { rtt: Infinity, offset: 0 }
+      let done = 0
+      for (let i = 0; i < 5; i++) {
+        const t0 = Date.now()
+        socket.emit('time-sync', t0, (serverTime: number) => {
+          const rtt = Date.now() - t0
+          if (rtt < best.rtt) best = { rtt, offset: serverTime + rtt / 2 - Date.now() }
+          if (++done === 5) serverOffset.current = best.offset
+        })
+      }
+    }
+
     if (socket.connected) {
       joinOrCreate()
+      syncClock()
     } else {
       socket.once('connect', joinOrCreate)
+      socket.on('connect', syncClock)
       socket.connect()
     }
 
@@ -119,13 +127,15 @@ export default function StudioView() {
     })
 
     socket.on('countdown-start', (data: any) => {
-      if (data.prompt) setPosePrompt(data.prompt)
       setCurrentCapture(data.photo)
       startCountdownSequence(data.count ?? 5)
     })
 
     socket.on('capture-now', (data: any) => {
-      capturePhotoRef.current(data.photo)
+      // Fire at the same server instant on every device
+      const fireAt = (data.captureAt ?? Date.now()) - serverOffset.current
+      const delay = Math.max(0, fireAt - Date.now())
+      setTimeout(() => capturePhotoRef.current(data.photo), delay)
     })
 
     socket.on('session-review', (data: any) => {
@@ -142,7 +152,6 @@ export default function StudioView() {
       setPhase('review')
     })
 
-    // Partner opened the strip builder — follow them in
     socket.on('strip-open', () => {
       setView('stripBuilder')
     })
@@ -177,6 +186,7 @@ export default function StudioView() {
       socket.off('photo-received')
       socket.off('session-complete')
       socket.off('reaction-received')
+      socket.off('connect', syncClock)
       socket.off('error')
     }
   }, [roomCode])
@@ -211,7 +221,7 @@ export default function StudioView() {
         setCameraError(
           window.isSecureContext
             ? 'This browser does not support camera access.'
-            : 'Camera needs a secure (HTTPS) connection. Open the app via HTTPS or localhost — on a phone over http://<ip> the browser disables the camera.'
+            : 'Camera needs a secure (HTTPS) connection. Open the app via HTTPS or localhost.'
         )
         return
       }
@@ -223,7 +233,6 @@ export default function StudioView() {
             audio: false,
           })
         } catch (firstErr: any) {
-          // Fallback: minimal constraints (helps on devices that reject ideal res)
           if (firstErr?.name === 'OverconstrainedError' || firstErr?.name === 'NotReadableError') {
             stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
           } else {
@@ -284,8 +293,6 @@ export default function StudioView() {
     const hasRemote = !!(remote && remoteStream && remote.videoWidth > 0)
 
     if (hasRemote) {
-      // Side-by-side couple shot — FULL frames, no cropping/zoom. Each half
-      // keeps its camera's own aspect ratio, scaled to a common height.
       const h = Math.min(video.videoHeight, remote!.videoHeight) || 720
       const wL = Math.round(h * (video.videoWidth / video.videoHeight))
       const wR = Math.round(h * (remote!.videoWidth / remote!.videoHeight))
@@ -303,7 +310,6 @@ export default function StudioView() {
       ctx.restore()
       ctx.drawImage(remote!, wL, 0, wR, h)
 
-      // subtle divider
       ctx.fillStyle = 'rgba(255,255,255,0.6)'
       ctx.fillRect(wL - 1, 0, 2, h)
     } else {
@@ -318,7 +324,6 @@ export default function StudioView() {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
     }
 
-    // Apply filter via CSS on canvas
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
 
     const photo: CapturedPhoto = {
@@ -333,15 +338,12 @@ export default function StudioView() {
     addPhoto(photo)
     setCurrentCapture(order)
 
-    // Flash effect
     setFlashActive(true)
     setTimeout(() => setFlashActive(false), 600)
 
-    // Haptic feedback
     if (navigator.vibrate) navigator.vibrate(50)
   }, [selectedFilter, userId, mirrored, addPhoto, remoteStream])
 
-  // Socket handlers register once — read the latest capture fn through a ref
   const capturePhotoRef = useRef(capturePhoto)
   useEffect(() => { capturePhotoRef.current = capturePhoto }, [capturePhoto])
 
@@ -358,7 +360,6 @@ export default function StudioView() {
         clearInterval(interval)
         setCountdown(null)
         setPhase('capture')
-        // actual capture fires on the server's synced 'capture-now'
       }
     }, 1000)
   }, [])
@@ -377,15 +378,11 @@ export default function StudioView() {
     socketRef.current?.emit('send-reaction', { emoji })
   }
 
-
   const handleRetake = (order: number) => {
-    // In review, allow individual retake
     toast.info(`Retake photo ${order} — feature coming soon!`)
   }
 
   const filterCss = getFilterCss(selectedFilter)
-
-  // Floating reactions
   const floatingReactions = reactions.slice(-5)
 
   return (
@@ -419,7 +416,6 @@ export default function StudioView() {
 
       {/* Main Camera Area */}
       <div className="flex-1 flex items-center justify-center pt-14 pb-24 relative">
-        {/* Camera — Instagram-call style fused split frame */}
         <div className={`relative w-full mx-auto px-4 ${participants.length > 1 ? 'max-w-4xl' : 'max-w-2xl'}`}>
           <div className={`relative rounded-3xl overflow-hidden bg-neutral-900 shadow-2xl ring-1 ring-white/10 ${
             participants.length > 1 ? 'aspect-[16/9] sm:aspect-[2/1]' : 'aspect-[4/3]'
@@ -512,22 +508,7 @@ export default function StudioView() {
               ))}
             </AnimatePresence>
 
-            {/* Pose prompt — synced for everyone during countdown/capture */}
-            <AnimatePresence>
-              {posePrompt && (phase === 'countdown' || phase === 'capture') && (
-                <motion.div
-                  key={posePrompt}
-                  initial={{ opacity: 0, y: 16, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 px-4 py-1.5 rounded-full bg-black/55 backdrop-blur-md text-white text-sm font-semibold whitespace-nowrap"
-                >
-                  {posePrompt}
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Flash Overlay — whole frame */}
+            {/* Flash Overlay */}
             <AnimatePresence>
               {flashActive && (
                 <motion.div
@@ -539,7 +520,7 @@ export default function StudioView() {
               )}
             </AnimatePresence>
 
-            {/* Countdown Overlay — whole frame */}
+            {/* Countdown Overlay */}
             <AnimatePresence>
               {countdown !== null && countdown > 0 && (
                 <motion.div
@@ -581,7 +562,7 @@ export default function StudioView() {
             {/* Captured Thumbnails */}
             {capturedPhotos.length > 0 && phase !== 'review' && (
               <div className="absolute top-4 left-4 flex gap-2 z-20">
-                {capturedPhotos.sort((a, b) => a.order - b.order).map((p) => (
+                {[...capturedPhotos].sort((a, b) => a.order - b.order).map((p) => (
                   <div key={p.id} className="w-12 h-12 rounded-lg overflow-hidden border-2 border-white/40 shadow-lg">
                     <img src={p.dataUrl} alt="" className="w-full h-full object-cover" />
                   </div>
@@ -590,41 +571,40 @@ export default function StudioView() {
             )}
           </div>
 
-            {/* Filter circles — IG-style row overlaying the frame bottom */}
-            {phase === 'setup' && !cameraError && (
-              <div className="relative mt-3 sm:mt-0 sm:absolute sm:bottom-14 sm:left-0 sm:right-0 z-20 px-1 sm:px-3">
-                <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-center py-1">
-                  {FILTERS.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
-                      className="shrink-0 flex flex-col items-center gap-1"
-                    >
-                      <span className={`block w-12 h-12 rounded-full overflow-hidden transition-all duration-200 ${
-                        selectedFilter === f.id
-                          ? 'ring-[2.5px] ring-white scale-110 shadow-lg'
-                          : 'ring-1 ring-white/25 opacity-80 hover:opacity-100'
-                      }`}>
-                        {f.id === 'none' ? (
-                          <span className="w-full h-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white text-lg">✕</span>
-                        ) : (
-                          <span
-                            className="block w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300"
-                            style={{ filter: f.css || undefined }}
-                          />
-                        )}
-                      </span>
-                      {selectedFilter === f.id && (
-                        <span className="text-[9px] font-medium text-white drop-shadow">{f.name}</span>
+          {/* Filter row — always below the frame (desktop + mobile) */}
+          {phase === 'setup' && !cameraError && (
+            <div className="relative mt-3 z-20 px-1 sm:px-3">
+              <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-center py-1">
+                {FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
+                    className="shrink-0 flex flex-col items-center gap-1"
+                  >
+                    <span className={`block w-12 h-12 rounded-full overflow-hidden transition-all duration-200 ${
+                      selectedFilter === f.id
+                        ? 'ring-[2.5px] ring-white scale-110 shadow-lg'
+                        : 'ring-1 ring-white/25 opacity-80 hover:opacity-100'
+                    }`}>
+                      {f.id === 'none' ? (
+                        <span className="w-full h-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white text-lg">✕</span>
+                      ) : (
+                        <span
+                          className="block w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300"
+                          style={{ filter: f.css || undefined }}
+                        />
                       )}
-                    </button>
-                  ))}
-                </div>
+                    </span>
+                    {selectedFilter === f.id && (
+                      <span className="text-[9px] font-medium text-white drop-shadow">{f.name}</span>
+                    )}
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-
-          {/* Ready status — slim, under the frame */}
+          {/* Ready status */}
           {phase === 'setup' && participants.length > 1 && (
             <div className="flex items-center justify-center gap-2 mt-3">
               {participants.map((p) => (
@@ -690,7 +670,6 @@ export default function StudioView() {
                   exit={{ opacity: 0, y: 10 }}
                   className="flex items-center gap-3"
                 >
-                  {/* Mirror Toggle */}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -700,7 +679,6 @@ export default function StudioView() {
                     <FlipHorizontal2 className="w-5 h-5" />
                   </Button>
 
-                  {/* Start — either person can kick off the shoot */}
                   <Button
                     size="lg"
                     onClick={handleStartSession}
@@ -714,7 +692,7 @@ export default function StudioView() {
               )}
 
               {/* Capture Phase Controls */}
-              {(phase === 'capture') && (
+              {phase === 'capture' && (
                 <motion.div
                   key="capture"
                   initial={{ opacity: 0, scale: 0.9 }}
@@ -744,7 +722,7 @@ export default function StudioView() {
                 >
                   {capturedPhotos.length > 0 && (
                     <div className="flex gap-2 justify-center mb-2">
-                      {capturedPhotos.sort((a, b) => a.order - b.order).map((p) => (
+                      {[...capturedPhotos].sort((a, b) => a.order - b.order).map((p) => (
                         <button
                           key={p.id}
                           onClick={() => handleRetake(p.order)}
@@ -777,7 +755,6 @@ export default function StudioView() {
             </AnimatePresence>
           </div>
         </div>
-
       </div>
 
       {/* Hidden Canvas for capture */}

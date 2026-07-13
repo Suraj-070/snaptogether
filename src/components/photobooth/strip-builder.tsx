@@ -10,48 +10,71 @@ import { renderStrip } from '@/lib/strip'
 import { getSocket } from '@/lib/socket'
 import type { CapturedPhoto } from '@/lib/types'
 
-/**
- * "MAKE YOUR STRIP" — after the session, pick which shots go into the
- * strip and in what order. Pool on the left, strip slots on the right.
- */
 export default function StripBuilderView() {
   const {
     capturedPhotos, setFinalStripData, setAiCaption, setView,
   } = useAppStore()
 
-  // 6 shots taken, best 4 make the strip
   const slotCount = Math.min(4, Math.max(capturedPhotos.length, 1))
+  const [isBuilding, setIsBuilding] = useState(false)
+
+  // FIX: always keep correct number of slots.
+  // Initialize with slotCount so we never freeze at 1.
   const [slots, setSlots] = useState<(CapturedPhoto | null)[]>(
     () => Array(slotCount).fill(null)
   )
-  const [isBuilding, setIsBuilding] = useState(false)
 
-  // --- Collaborative editing: slot changes sync live between partners ---
+  // Grow/shrink slot array to match slotCount without any effect or ref.
+  // If length already matches, updater returns same reference → no re-render.
+  const currentSlots: (CapturedPhoto | null)[] =
+    slots.length === slotCount
+      ? slots
+      : (() => {
+          const next: (CapturedPhoto | null)[] = Array(slotCount).fill(null)
+          slots.forEach((s, i) => { if (i < slotCount) next[i] = s })
+          return next
+        })()
+
+  // Sync state when derived array differs (length changed between renders).
+  // useState setter is stable so this is safe to call during render.
+  if (currentSlots !== slots) {
+    setSlots(currentSlots)
+  }
+
+  // --- Collaborative editing ---
   const applyingRemote = useRef(false)
+  const didMount = useRef(false)
+
   useEffect(() => {
     const socket = getSocket()
     const onRemoteSlots = (data: { slots: (number | null)[] }) => {
       applyingRemote.current = true
-      // photo ids differ per device — sync by capture order, same on both sides
-      setSlots(data.slots.map(o => (o === null ? null : capturedPhotos.find(p => p.order === o) ?? null)))
-      // release after state applies
-      requestAnimationFrame(() => { applyingRemote.current = false })
+      setSlots(prev => {
+        const len = Math.max(prev.length, data.slots.length)
+        return Array.from({ length: len }, (_, i) => {
+          const o = data.slots[i]
+          return o == null ? null : capturedPhotos.find(p => p.order === o) ?? null
+        })
+      })
+      setTimeout(() => { applyingRemote.current = false }, 0)
     }
     socket.on('strip-slot-update', onRemoteSlots)
     return () => { socket.off('strip-slot-update', onRemoteSlots) }
   }, [capturedPhotos])
 
   useEffect(() => {
+    // Skip initial broadcast — would send all-null and wipe partner's slots
+    if (!didMount.current) { didMount.current = true; return }
     if (applyingRemote.current) return
-    getSocket().emit('strip-slot-update', { slots: slots.map(s => s?.order ?? null) })
-  }, [slots])
+    getSocket().emit('strip-slot-update', { slots: currentSlots.map(s => s?.order ?? null) })
+  }, [currentSlots])
 
-  const usedIds = new Set(slots.filter(Boolean).map(p => p!.id))
+  const usedIds = new Set(currentSlots.filter(Boolean).map(p => p!.id))
   const pool = capturedPhotos.filter(p => !usedIds.has(p.id))
-  const filledCount = slots.filter(Boolean).length
+  const filledCount = currentSlots.filter(Boolean).length
 
   const addToStrip = (photo: CapturedPhoto) => {
-    const idx = slots.findIndex(s => s === null)
+    const idx = currentSlots.findIndex(s => s === null)
     if (idx === -1) {
       toast('Strip is full — remove one first')
       return
@@ -64,7 +87,7 @@ export default function StripBuilderView() {
   }
 
   const handleCreate = async () => {
-    const chosen = slots.filter(Boolean) as CapturedPhoto[]
+    const chosen = currentSlots.filter(Boolean) as CapturedPhoto[]
     if (chosen.length === 0) return
     setIsBuilding(true)
 
@@ -77,7 +100,6 @@ export default function StripBuilderView() {
     setFinalStripData(stripData)
     setView('result')
 
-    // AI caption in the background
     fetch('/api/ai/caption', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,14 +112,11 @@ export default function StripBuilderView() {
 
   const autoFill = () => {
     const ordered = [...capturedPhotos].sort((a, b) => a.order - b.order)
-    setSlots(prev => prev.map((s, i) => s ?? ordered.filter(p => !usedIds.has(p.id))[i - filledCount] ?? ordered[i] ?? null))
-    // simple: just take first N in order
     setSlots(ordered.slice(0, slotCount))
   }
 
   return (
     <div className="min-h-screen bg-[#f6f5f3] flex flex-col">
-      {/* Header */}
       <header className="sticky top-0 z-40 bg-[#f6f5f3]/90 backdrop-blur-md">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <Button variant="ghost" size="sm" onClick={() => setView('studio')} className="text-neutral-600">
@@ -115,14 +134,13 @@ export default function StripBuilderView() {
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 pb-32 pt-2">
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_minmax(260px,320px)] gap-6">
-          {/* Photo pool */}
           <div>
             <p className="text-xs text-neutral-400 mb-3">
               Tap a photo to add it to the strip · {pool.length} available
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 content-start">
               <AnimatePresence>
-                {pool.sort((a, b) => a.order - b.order).map((p) => (
+                {[...pool].sort((a, b) => a.order - b.order).map((p) => (
                   <motion.button
                     key={p.id}
                     layout
@@ -145,11 +163,10 @@ export default function StripBuilderView() {
             </div>
           </div>
 
-          {/* Strip preview */}
           <div className="mx-auto w-full max-w-[320px]">
             <div className="strip-frame bg-[#efe9df] rounded-lg p-3 shadow-md ring-1 ring-black/5">
               <div className="space-y-2.5">
-                {slots.map((slot, i) => (
+                {currentSlots.map((slot, i) => (
                   <motion.div key={i} layout className="relative">
                     {slot ? (
                       <button
@@ -177,7 +194,6 @@ export default function StripBuilderView() {
         </div>
       </main>
 
-      {/* Create button */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-gradient-to-t from-[#f6f5f3] via-[#f6f5f3]/95 to-transparent pt-8 pb-5 px-4">
         <div className="max-w-md mx-auto">
           <Button
@@ -195,7 +211,7 @@ export default function StripBuilderView() {
             ) : (
               <>
                 <Sparkles className="w-5 h-5 mr-2" />
-                Create Strip ({filledCount}/{slots.length})
+                Create Strip ({filledCount}/{currentSlots.length})
               </>
             )}
           </Button>

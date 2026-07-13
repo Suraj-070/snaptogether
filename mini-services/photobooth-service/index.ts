@@ -173,19 +173,18 @@ io.on('connection', (socket) => {
     io.to(code).emit('studio-entered', { room: getRoomInfo(room) })
   })
 
-  // Pose prompts shown during each countdown — synced for everyone
-  const POSE_PROMPTS = [
-    'Silly face! 🤪', 'Look at each other 👀', 'Heart hands 🫶',
-    'Biggest smile 😁', 'Serious model face 😐', 'Point at each other 👉',
-    'Peace signs ✌️', 'Surprised! 😱', 'Blow a kiss 😘', 'Thumbs up 👍',
-  ]
-
   const SHOT_COUNT = 6
   const COUNTDOWN_SECS = 5
+  const CAPTURE_LEAD_MS = 600 // clients fire at this many ms after emit — absorbs network jitter
   const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+  // Clock sync — lets clients schedule capture at the exact same instant
+  socket.on('time-sync', (_clientTime: number, cb: (serverTime: number) => void) => {
+    if (typeof cb === 'function') cb(Date.now())
+  })
+
   // Server drives the whole shoot so both screens stay perfectly in sync:
-  // 6 shots, each = synced 5s countdown -> capture signal -> short gap.
+  // 6 shots, each = synced 5s countdown -> scheduled capture signal -> short gap.
   socket.on('start-session', async () => {
     const code = socket.data.roomCode
     if (!code) return
@@ -202,15 +201,17 @@ io.on('connection', (socket) => {
       if (!rooms.has(code)) break
       room.status = 'countdown'
       room.currentPhoto = shot
-      const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
       io.to(code).emit('countdown-start', {
-        count: COUNTDOWN_SECS, photo: shot, total: SHOT_COUNT, prompt,
+        count: COUNTDOWN_SECS, photo: shot, total: SHOT_COUNT,
       })
       await sleep(COUNTDOWN_SECS * 1000 + 300)
       if (!rooms.has(code)) break
       room.status = 'capturing'
-      io.to(code).emit('capture-now', { photo: shot, total: SHOT_COUNT })
-      await sleep(2200)
+      // Both clients calculate: fire at captureAt - serverOffset = same wall-clock moment
+      io.to(code).emit('capture-now', {
+        photo: shot, total: SHOT_COUNT, captureAt: Date.now() + CAPTURE_LEAD_MS,
+      })
+      await sleep(CAPTURE_LEAD_MS + 2200)
     }
 
     if (rooms.has(code)) {
@@ -220,16 +221,16 @@ io.on('connection', (socket) => {
     ;(room as any).sequenceRunning = false
   })
 
-  socket.on('start-countdown', () => {
-    const code = socket.data.roomCode
-    if (!code) return
-    const room = rooms.get(code)
-    if (!room) return
+  // socket.on('start-countdown', () => {
+  //   const code = socket.data.roomCode
+  //   if (!code) return
+  //   const room = rooms.get(code)
+  //   if (!room) return
 
-    room.status = 'countdown'
-    const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
-    io.to(code).emit('countdown-start', { count: 3, photo: room.currentPhoto, total: room.totalPhotos, prompt })
-  })
+  //   room.status = 'countdown'
+  //   // const prompt = POSE_PROMPTS[Math.floor(Math.random() * POSE_PROMPTS.length)]
+  //   io.to(code).emit('countdown-start', { count: 3, photo: room.currentPhoto, total: room.totalPhotos, prompt })
+  // })
 
   socket.on('photo-captured', (data: { imageData: string; order: number }) => {
     const code = socket.data.roomCode
