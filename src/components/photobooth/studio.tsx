@@ -58,17 +58,21 @@ export default function StudioView() {
     const socket: Socket = getSocket()
 
     const joinOrCreate = () => {
-      // BUG-02: use sessionStorage sentinel to prevent duplicate room creation
-      // on socket reconnect. Without this, a reconnect re-emits create-room
-      // which the server rejects (code taken) and creates a new orphan room.
+      // Studio should NEVER re-create or re-join a room.
+      // create-room.tsx and join-room.tsx already handled that and set the sentinel.
+      // Studio only needs to rejoin on reconnect (socket dropped mid-session).
       const sentinelKey = `snap_joined_${roomCode}`
       const alreadyJoined = sessionStorage.getItem(sentinelKey) === '1'
 
-      if (alreadyJoined && socket.connected) {
-        // Socket reconnected — re-announce presence without creating a new room
+      if (alreadyJoined) {
+        // Already in the room — just re-announce so server knows our socket ID
         socket.emit('rejoin-room', { code: roomCode, username })
         return
       }
+
+      // Fallback: sentinel missing (e.g. hard refresh in studio).
+      // Re-join/create as last resort only.
+      console.warn('[Studio] sentinel missing for', roomCode, '— falling back to join/create')
       if (isCreator) {
         socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: roomCode })
       } else {
@@ -220,7 +224,8 @@ export default function StudioView() {
       socket.off('connect', syncClock)
       socket.off('error')
     }
-  }, [roomCode])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // run ONCE on mount — roomCode/username read from Zustand inside
 
   // Camera setup
   const [cameraAttempt, setCameraAttempt] = useState(0)
