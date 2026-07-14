@@ -465,7 +465,7 @@ export default function ResultView() {
             <span className="font-semibold text-sm">Decorate Your Strip</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={handleDownload} className="text-white/60 hover:text-white text-xs gap-1.5">
+            <Button variant="ghost" size="sm" onClick={handleDownload} className="text-white/80 hover:text-white text-xs gap-1.5 hover:bg-white/10">
               <Download className="w-3.5 h-3.5" /> Save HD
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setView('gallery')} className="text-white/60 hover:text-white">
@@ -484,7 +484,7 @@ export default function ResultView() {
           <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
             <div className="px-3 pt-3 pb-2">
               <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-xs font-semibold text-white/50 tracking-wider uppercase">Stickers</span>
+                <span className="text-xs font-semibold text-white/70 tracking-wider uppercase">Stickers</span>
                 <span className="text-[9px] text-white/25">Powered by GIPHY</span>
               </div>
 
@@ -504,7 +504,7 @@ export default function ResultView() {
                 <button
                   onClick={() => searchGiphy(stickerQuery)}
                   disabled={stickerLoading || !stickerQuery.trim()}
-                  className="px-3 py-2 bg-primary rounded-xl text-xs font-medium disabled:opacity-40 shrink-0"
+                  className="px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium disabled:opacity-40 shrink-0 hover:bg-primary/90 transition-colors"
                 >
                   {stickerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Go'}
                 </button>
@@ -517,7 +517,7 @@ export default function ResultView() {
                     <button
                       key={tag}
                       onClick={() => { setStickerQuery(tag); searchGiphy(tag) }}
-                      className="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-full text-[10px] text-white/60 hover:text-white transition-colors capitalize"
+                      className="px-2.5 py-1 bg-white/12 hover:bg-white/22 rounded-full text-[10px] text-white/70 hover:text-white transition-colors capitalize border border-white/10"
                     >
                       {tag}
                     </button>
@@ -561,7 +561,7 @@ export default function ResultView() {
                     <div key={s.id} className="relative group">
                       <button
                         onClick={() => setSelectedSticker(s.id === selectedSticker ? null : s.id)}
-                        className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all ${selectedSticker === s.id ? 'border-primary' : 'border-white/10'}`}
+                        className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all ${selectedSticker === s.id ? 'border-primary ring-2 ring-primary/30' : 'border-white/20 hover:border-white/40'}`}
                       >
                         {isUrl ? (
                           <img src={s.emoji} alt="" className="w-full h-full object-contain bg-white/5" />
@@ -596,7 +596,7 @@ export default function ResultView() {
                   key={t.id}
                   onClick={() => setTool(t.id)}
                   className={`flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-medium transition-all ${
-                    tool === t.id ? 'bg-primary text-white shadow' : 'text-white/50 hover:text-white hover:bg-white/10'
+                    tool === t.id ? 'bg-primary text-white shadow-sm' : 'text-white/60 hover:text-white/90 hover:bg-white/10'
                   }`}
                 >
                   <span className="text-sm">{t.icon}</span>
@@ -619,7 +619,7 @@ export default function ResultView() {
                     >
                       {color === c && (
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <Check className="w-3 h-3 text-white drop-shadow" />
+                          <Check className="w-3 h-3 drop-shadow-md" style={{ color: ["#ffffff","#ffcc02"].includes(color) ? "#000" : "#fff" }} />
                         </div>
                       )}
                     </button>
@@ -640,7 +640,7 @@ export default function ResultView() {
                       key={i}
                       onClick={() => setBrushSize(i)}
                       className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
-                        brushSize === i ? 'bg-primary/20 ring-2 ring-primary' : 'hover:bg-white/10'
+                        brushSize === i ? 'bg-primary/25 ring-2 ring-primary/80' : 'hover:bg-white/10'
                       }`}
                     >
                       <div
@@ -648,7 +648,7 @@ export default function ResultView() {
                         style={{
                           width: Math.min(6 + i * 5, 28),
                           height: Math.min(6 + i * 5, 28),
-                          backgroundColor: tool === 'erase' ? '#ffffff40' : (brushSize === i ? color : '#ffffff50'),
+                          backgroundColor: tool === 'erase' ? 'rgba(255,255,255,0.5)' : (brushSize === i ? color : 'rgba(255,255,255,0.35)'),
                         }}
                       />
                     </button>
@@ -660,7 +660,7 @@ export default function ResultView() {
             {/* Clear drawings */}
             <button
               onClick={() => { setStrokes([]); socket.emit('strip-clear-drawing') }}
-              className="flex items-center justify-center gap-2 py-2 rounded-xl bg-white/5 hover:bg-red-500/15 text-white/40 hover:text-red-400 text-xs transition-colors"
+              className="flex items-center justify-center gap-2 py-2 rounded-xl bg-white/8 hover:bg-red-500/20 text-white/55 hover:text-red-400 text-xs transition-colors border border-white/8 hover:border-red-500/20"
             >
               <Trash2 className="w-3.5 h-3.5" /> Clear all drawings
             </button>
@@ -729,18 +729,18 @@ export default function ResultView() {
 
           {/* Action buttons below strip */}
           <div className="w-full max-w-sm lg:max-w-xs xl:max-w-sm flex flex-col gap-2">
-            <Button size="lg" onClick={handleDownload} className="w-full rounded-2xl bg-primary hover:bg-primary/90">
+            <Button size="lg" onClick={handleDownload} className="w-full rounded-2xl bg-primary hover:bg-primary/90 text-white font-semibold">
               <Download className="w-4 h-4 mr-2" /> Download HD
             </Button>
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" onClick={handleShare} className="rounded-xl border-white/15 text-white hover:bg-white/10">
+              <Button variant="outline" onClick={handleShare} className="rounded-xl border-white/25 text-white hover:bg-white/15 hover:border-white/40">
                 <Share2 className="w-4 h-4 mr-2" /> Share
               </Button>
               <Button
                 variant="outline"
                 onClick={handleSaveMemory}
                 disabled={isSaving || isSaved}
-                className={`rounded-xl border-white/15 text-white hover:bg-white/10 ${isSaved ? 'border-green-500/40 text-green-400' : ''}`}
+                className={`rounded-xl border-white/25 text-white hover:bg-white/15 hover:border-white/40 ${isSaved ? 'border-green-500/60 text-green-400' : ''}`}
               >
                 {isSaving ? <Loader2 className="w-4 h-4 animate-spin" />
                   : isSaved ? <><Check className="w-4 h-4 mr-1" />Saved</>
@@ -756,13 +756,13 @@ export default function ResultView() {
           <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
             <div className="flex items-center gap-2 mb-2">
               <Sparkles className="w-4 h-4 text-primary" />
-              <span className="text-xs font-semibold text-white/50 tracking-wider uppercase">Caption</span>
+              <span className="text-xs font-semibold text-white/70 tracking-wider uppercase">Caption</span>
             </div>
             <p className="text-sm leading-snug mb-3 text-white/90">{aiCaption || 'A moment worth remembering ✨'}</p>
             <button
               onClick={handleNewCaption}
               disabled={isGeneratingCaption}
-              className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors"
+              className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/80 transition-colors"
             >
               {isGeneratingCaption
                 ? <Loader2 className="w-3 h-3 animate-spin" />
