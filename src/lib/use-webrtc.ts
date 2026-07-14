@@ -3,18 +3,22 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-]
+// Fetch ICE servers from our Next.js API route, which calls Cloudflare TURN
+// to generate short-lived credentials. Falls back to STUN-only if not configured.
+async function getIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch('/api/turn', { cache: 'force-cache' })
+    const data = await res.json()
+    return data.iceServers as RTCIceServer[]
+  } catch {
+    // Network error — fall back to Google STUN
+    return [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+    ]
+  }
+}
 
-/**
- * Two-person live video for the studio.
- *
- * The socket server relays offers/answers/ICE; video itself flows
- * peer-to-peer. The room creator initiates the offer whenever a partner
- * is present, so it works regardless of who opens the studio first.
- */
 export function useWebRTC(opts: {
   socket: Socket | null
   localStream: MediaStream | null
@@ -28,6 +32,13 @@ export function useWebRTC(opts: {
   const [connected, setConnected] = useState(false)
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const peerIdRef = useRef<string | null>(null)
+  const iceServersRef = useRef<RTCIceServer[] | null>(null)
+
+  // Pre-fetch ICE servers as soon as the hook mounts so they're ready
+  // when the peer connection is needed (avoids a waterfall delay)
+  useEffect(() => {
+    getIceServers().then(servers => { iceServersRef.current = servers })
+  }, [])
 
   useEffect(() => {
     if (!socket || !localStream) return
@@ -36,9 +47,14 @@ export function useWebRTC(opts: {
 
     let closed = false
 
-    const newPc = () => {
+    const newPc = async () => {
       pcRef.current?.close()
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+
+      // Use cached ICE servers, or fetch now if not ready yet
+      const iceServers = iceServersRef.current ?? await getIceServers()
+      iceServersRef.current = iceServers
+
+      const pc = new RTCPeerConnection({ iceServers })
       pcRef.current = pc
 
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
@@ -62,7 +78,8 @@ export function useWebRTC(opts: {
     }
 
     const makeOffer = async () => {
-      const pc = newPc()
+      const pc = await newPc()
+      if (!pc) return
       try {
         const offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
@@ -70,9 +87,10 @@ export function useWebRTC(opts: {
       } catch { /* retry happens on next participant event */ }
     }
 
-    const onOffer = async (data: { sdp: any; from: string }) => {
+    const onOffer = async (data: { sdp: RTCSessionDescriptionInit; from: string }) => {
       peerIdRef.current = data.from
-      const pc = newPc()
+      const pc = await newPc()
+      if (!pc) return
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
         const answer = await pc.createAnswer()
@@ -81,28 +99,24 @@ export function useWebRTC(opts: {
       } catch { /* ignore glare; initiator re-offers */ }
     }
 
-    const onAnswer = async (data: { sdp: any; from: string }) => {
+    const onAnswer = async (data: { sdp: RTCSessionDescriptionInit; from: string }) => {
       peerIdRef.current = data.from
       try {
         await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.sdp))
       } catch { /* stale answer */ }
     }
 
-    const onIce = async (data: { candidate: any; from: string }) => {
+    const onIce = async (data: { candidate: RTCIceCandidateInit; from: string }) => {
       try {
         await pcRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate))
       } catch { /* candidate for a torn-down pc */ }
     }
 
-    // Ready-handshake: a lone timed offer gets lost if the partner's camera
-    // isn't up yet. Instead, both sides announce readiness; the initiator
-    // (re)offers every time it hears the peer is ready.
     const onPeerReady = (data: { from: string }) => {
       peerIdRef.current = data.from
       if (isInitiator) {
         makeOffer()
       } else {
-        // reply so an initiator that mounted late still learns we're here
         socket.emit('webrtc-ready')
       }
     }
@@ -112,7 +126,6 @@ export function useWebRTC(opts: {
     socket.on('webrtc-ice', onIce)
     socket.on('webrtc-ready', onPeerReady)
 
-    // Announce our own readiness (stream is guaranteed non-null here).
     socket.emit('webrtc-ready')
 
     return () => {

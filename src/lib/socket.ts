@@ -20,7 +20,23 @@ export function getSocket(): Socket {
         ? `${window.location.protocol}//${window.location.hostname}:3004`
         : 'http://localhost:3004'
 
-    socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || fallback, {
+    // ARCH-04: NEXT_PUBLIC_SOCKET_URL must be set in Vercel production env vars.
+    // If missing in production the fallback becomes https://vercel.app:3004 which
+    // doesn't exist. Throw early so the error is obvious instead of a silent hang.
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || fallback
+    if (
+      typeof window !== 'undefined' &&
+      process.env.NODE_ENV === 'production' &&
+      !process.env.NEXT_PUBLIC_SOCKET_URL
+    ) {
+      console.error(
+        '[SnapTogether] NEXT_PUBLIC_SOCKET_URL is not set. ' +
+        'Add it to your Vercel environment variables pointing to your Render socket server. ' +
+        'e.g. NEXT_PUBLIC_SOCKET_URL=https://your-app.onrender.com'
+      )
+    }
+
+    socket = io(socketUrl, {
       path: '/',
       transports: ['websocket', 'polling'],
       autoConnect: false,

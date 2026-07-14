@@ -81,13 +81,27 @@ export default function ResultView() {
     img.src = finalStripData
   }, [finalStripData])
 
+  // Keep latest strokes/stickers in refs so redraw always uses current values
+  // even when called from handleDownload (which can't close over state reliably)
+  const strokesRef = useRef<Stroke[]>([])
+  const stickersRef = useRef<Sticker[]>([])
+  useEffect(() => { strokesRef.current = strokes }, [strokes])
+  useEffect(() => { stickersRef.current = stickers }, [stickers])
+
   // ── redraw everything ──
-  const redraw = useCallback(() => {
+  // Uses refs (not state) so it's always current even in async contexts like download
+  const redraw = useCallback((
+    overrideStrokes?: Stroke[],
+    overrideStickers?: Sticker[],
+  ) => {
     const canvas = drawCanvasRef.current
     const img = stripImgRef.current
     if (!canvas || !img) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    const activeStrokes = overrideStrokes ?? strokesRef.current
+    const activeStickers = overrideStickers ?? stickersRef.current
 
     // canvas logical size = strip image size (HD)
     canvas.width = img.naturalWidth
@@ -97,29 +111,30 @@ export default function ResultView() {
     ctx.drawImage(img, 0, 0)
 
     // draw committed strokes
-    strokes.forEach(s => paintStroke(ctx, s.points, s.color, s.size, canvas.width))
+    activeStrokes.forEach(s => paintStroke(ctx, s.points, s.color, s.size, canvas.width))
 
     // draw remote in-progress strokes
     remoteStrokesRef.current.forEach((pts, uid) => {
       if (pts.length < 2) return
-      // give each remote user a colour based on uid hash
       const hue = [...uid].reduce((a, c) => a + c.charCodeAt(0), 0) % 360
       paintStroke(ctx, pts, `hsl(${hue},80%,55%)`, DRAW_SIZES[2], canvas.width)
     })
 
-    // draw stickers
-    stickers.forEach(s => {
+    // BUG-10 fix: draw stickers directly onto canvas (not just as DOM divs)
+    // This ensures they appear in the downloaded PNG
+    activeStickers.forEach(s => {
       const px = s.x * canvas.width
       const py = s.y * canvas.height
-      const size = 60 * s.scale * (canvas.width / 448) // 448 = base display width
+      const size = 60 * s.scale * (canvas.width / 448)
       ctx.font = `${size}px serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillText(s.emoji, px, py)
     })
-  }, [strokes, stickers])
+  }, [])  // stable — reads from refs, no state deps needed
 
-  useEffect(() => { redraw() }, [redraw])
+  // Redraw whenever strokes or stickers change
+  useEffect(() => { redraw(strokes, stickers) }, [strokes, stickers, redraw])
 
   function paintStroke(
     ctx: CanvasRenderingContext2D,
@@ -309,15 +324,18 @@ export default function ResultView() {
   const handleDownload = () => {
     const canvas = drawCanvasRef.current
     if (!canvas) return
-    // Trigger a full redraw at native HD resolution, then export
-    redraw()
-    requestAnimationFrame(() => {
+    // Pass current stickers/strokes explicitly so the download canvas
+    // always reflects the latest state (BUG-10 fix)
+    redraw(strokesRef.current, stickersRef.current)
+    // Use setTimeout instead of rAF — rAF fires before the canvas
+    // context finishes flushing on some mobile browsers
+    setTimeout(() => {
       const link = document.createElement('a')
       link.download = `snaptogether-${roomCode}-${Date.now()}.png`
       link.href = canvas.toDataURL('image/png', 1.0)
       link.click()
-      toast.success('HD strip downloaded!')
-    })
+      toast.success('HD strip saved! 🎉')
+    }, 100)
   }
 
   const handleShare = async () => {

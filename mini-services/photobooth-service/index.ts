@@ -187,6 +187,11 @@ io.on('connection', (socket) => {
     if (!code) return
     const room = rooms.get(code)
     if (!room) return
+    // BUG-03: only the creator can trigger the shoot sequence
+    if (socket.id !== room.creatorId) {
+      socket.emit('error', { message: 'Only the room creator can start the session' })
+      return
+    }
     if ((room as any).sequenceRunning) return
 
     ;(room as any).sequenceRunning = true
