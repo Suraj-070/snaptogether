@@ -5,12 +5,14 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Download, Share2, RotateCcw, Sparkles,
   Camera, Copy, Check, Home, GalleryHorizontalEnd,
-  Save, Pen, Eraser, Trash2, Search, Loader2, X,
+  Save, Pen, Eraser, Trash2, Search, Loader2, X, ToggleLeft, ToggleRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getSocket } from '@/lib/socket'
+import { renderStrip } from '@/lib/strip'
+import type { StripOptions } from '@/lib/strip'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Stroke {
@@ -63,6 +65,10 @@ export default function ResultView() {
   // Drag
   const [draggingSticker, setDraggingSticker] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+
+  // Strip overlay options
+  const [showStripHeader, setShowStripHeader] = useState(true)
+  const [showStripCaption, setShowStripCaption] = useState(false)
 
   // Actions
   const [isSaved, setIsSaved] = useState(false)
@@ -282,11 +288,21 @@ export default function ResultView() {
     })
   }
 
+  const placingRef = useRef(false)
   async function placeSticker(giphy: GiphySticker) {
+    // Prevent double-tap on mobile (touch + click both fire)
+    if (placingRef.current) return
+    placingRef.current = true
+    setTimeout(() => { placingRef.current = false }, 600)
+
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
     await loadStickerImage(giphy)
     const s: Sticker = { id, emoji: giphy.url, x: 0.5, y: 0.5, scale: 1 }
-    setStickers(prev => [...prev, s])
+    setStickers(prev => {
+      // Guard: don't add if same id already exists (socket echo safety)
+      if (prev.find(p => p.id === id)) return prev
+      return [...prev, s]
+    })
     socket.emit('strip-sticker-add', { ...s, giphyId: giphy.id, giphyUrl: giphy.url })
   }
 
@@ -387,18 +403,35 @@ export default function ResultView() {
     }
   }, [socket])
 
-  // ── Download ──
-  const handleDownload = () => {
-    const canvas = drawCanvasRef.current
-    if (!canvas) return
-    redraw(strokesRef.current, stickersRef.current)
-    setTimeout(() => {
-      const link = document.createElement('a')
-      link.download = `snaptogether-${roomCode}-${Date.now()}.png`
-      link.href = canvas.toDataURL('image/png', 1.0)
-      link.click()
-      toast.success('HD strip saved! 🎉')
-    }, 120)
+  // ── Download — re-renders strip with current options before saving ──
+  const handleDownload = async () => {
+    if (!finalStripData || !capturedPhotos.length) return
+    const chosen = capturedPhotos.sort((a, b) => a.order - b.order)
+
+    // Re-render strip with current header/caption options
+    const freshStrip = await renderStrip(chosen, {
+      showHeader: showStripHeader,
+      showCaption: showStripCaption,
+      caption: aiCaption || '',
+    })
+    if (!freshStrip) return
+
+    // Update the canvas with fresh strip + decorations
+    const img = new Image()
+    img.onload = () => {
+      stripImgRef.current = img
+      redraw(strokesRef.current, stickersRef.current)
+      setTimeout(() => {
+        const canvas = drawCanvasRef.current
+        if (!canvas) return
+        const link = document.createElement('a')
+        link.download = `snaptogether-${roomCode}-${Date.now()}.png`
+        link.href = canvas.toDataURL('image/png', 1.0)
+        link.click()
+        toast.success('HD strip saved! 🎉')
+      }, 120)
+    }
+    img.src = freshStrip
   }
 
   const handleShare = async () => {
@@ -769,6 +802,29 @@ export default function ResultView() {
                 : <RotateCcw className="w-3 h-3" />}
               New caption
             </button>
+          </div>
+
+          {/* Strip overlay options */}
+          <div className="bg-white/5 rounded-2xl p-3 border border-white/10">
+            <p className="text-[10px] text-white/50 font-semibold tracking-wider uppercase mb-3">Strip options</p>
+            <div className="flex flex-col gap-2.5">
+              <label className="flex items-center justify-between cursor-pointer group">
+                <span className="text-xs text-white/70 group-hover:text-white transition-colors">Show name + date</span>
+                <button onClick={() => setShowStripHeader(v => !v)} className="shrink-0">
+                  {showStripHeader
+                    ? <ToggleRight className="w-8 h-8 text-primary" />
+                    : <ToggleLeft className="w-8 h-8 text-white/30" />}
+                </button>
+              </label>
+              <label className="flex items-center justify-between cursor-pointer group">
+                <span className="text-xs text-white/70 group-hover:text-white transition-colors">Show caption on strip</span>
+                <button onClick={() => setShowStripCaption(v => !v)} className="shrink-0">
+                  {showStripCaption
+                    ? <ToggleRight className="w-8 h-8 text-primary" />
+                    : <ToggleLeft className="w-8 h-8 text-white/30" />}
+                </button>
+              </label>
+            </div>
           </div>
 
           {/* Room code */}

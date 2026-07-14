@@ -224,7 +224,6 @@ export default function StudioView() {
       socket.off('connect', syncClock)
       socket.off('error')
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run ONCE on mount — roomCode/username read from Zustand inside
 
   // Camera setup

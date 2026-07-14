@@ -1,12 +1,22 @@
 import type { CapturedPhoto } from '@/lib/types'
 
-/**
- * Renders the final photo strip from an ordered list of chosen photos.
- * Extracted from the studio so the strip-builder can generate strips from
- * any user-picked selection/order.
- */
-export async function renderStrip(photos: CapturedPhoto[]): Promise<string | null> {
+export interface StripOptions {
+  showHeader?: boolean   // show SnapTogether + date (default: true)
+  showCaption?: boolean  // show caption at bottom (default: false)
+  caption?: string       // caption text if showCaption is true
+}
+
+export async function renderStrip(
+  photos: CapturedPhoto[],
+  options: StripOptions = {},
+): Promise<string | null> {
   if (photos.length === 0) return null
+
+  const {
+    showHeader = true,
+    showCaption = false,
+    caption = '',
+  } = options
 
   const stripCanvas = document.createElement('canvas')
   const ctx = stripCanvas.getContext('2d')
@@ -15,11 +25,9 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
   const padding = 24
   const gap = 12
   const photoW = 400
-  const headerH = 80
-  const footerH = 60
+  const headerH = showHeader ? 80 : 16
+  const footerH = showCaption && caption ? 70 : (showHeader ? 40 : 16)
 
-  // Load first — slot heights follow each photo's own aspect ratio so
-  // nothing gets cropped or zoomed.
   const loadImage = (src: string) =>
     new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image()
@@ -27,7 +35,8 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
       img.onerror = reject
       img.src = src
     })
-  const loadedImages = await Promise.all(photos.map((p) => loadImage(p.dataUrl)))
+
+  const loadedImages = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
   const heights = loadedImages.map(img => Math.round(photoW * (img.naturalHeight / img.naturalWidth)))
 
   stripCanvas.width = photoW + padding * 2
@@ -42,26 +51,27 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
   ctx.lineWidth = 2
   ctx.strokeRect(1, 1, stripCanvas.width - 2, stripCanvas.height - 2)
 
-  // Header
-  ctx.fillStyle = '#333'
-  ctx.font = 'bold 18px system-ui, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('SnapTogether', stripCanvas.width / 2, 35)
+  // Header — SnapTogether + date (optional)
+  if (showHeader) {
+    ctx.fillStyle = '#333'
+    ctx.font = 'bold 18px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('SnapTogether', stripCanvas.width / 2, 35)
 
-  ctx.fillStyle = '#999'
-  ctx.font = '12px system-ui, sans-serif'
-  ctx.fillText(
-    new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    stripCanvas.width / 2,
-    58,
-  )
+    ctx.fillStyle = '#999'
+    ctx.font = '12px system-ui, sans-serif'
+    ctx.fillText(
+      new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      stripCanvas.width / 2,
+      58,
+    )
+  }
 
-  // Draw full frames — rounded corners, no cropping.
+  // Photos
   let y = headerH
   photos.forEach((_photo, i) => {
     const img = loadedImages[i]
     const photoH = heights[i]
-
     const r = 8
     ctx.save()
     ctx.beginPath()
@@ -78,16 +88,40 @@ export async function renderStrip(photos: CapturedPhoto[]): Promise<string | nul
     ctx.clip()
     ctx.drawImage(img, padding, y, photoW, photoH)
     ctx.restore()
-
     y += photoH + gap
   })
 
-  // Footer
-  const footerY = stripCanvas.height - 40
-  ctx.fillStyle = '#bbb'
-  ctx.font = '10px system-ui, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillText(`${photos.length} memories captured together`, stripCanvas.width / 2, footerY)
+  // Footer — caption (optional) or minimal memory count
+  const footerY = stripCanvas.height - (showCaption && caption ? 44 : 22)
+
+  if (showCaption && caption) {
+    // Caption text — wrap if needed
+    ctx.fillStyle = '#555'
+    ctx.font = 'italic 13px Georgia, serif'
+    ctx.textAlign = 'center'
+    const maxWidth = stripCanvas.width - padding * 2
+    const words = caption.split(' ')
+    let line = ''
+    let lineY = stripCanvas.height - 54
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word
+      if (ctx.measureText(test).width > maxWidth && line) {
+        ctx.fillText(line, stripCanvas.width / 2, lineY)
+        line = word
+        lineY += 18
+      } else {
+        line = test
+      }
+    }
+    if (line) ctx.fillText(line, stripCanvas.width / 2, lineY)
+  }
+
+  if (showHeader) {
+    ctx.fillStyle = '#ccc'
+    ctx.font = '9px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(`${photos.length} memories captured together`, stripCanvas.width / 2, stripCanvas.height - 12)
+  }
 
   return stripCanvas.toDataURL('image/jpeg', 0.9)
 }

@@ -1,12 +1,20 @@
 'use client'
 
 import { useAppStore } from '@/lib/store'
+import { useSession, signOut } from 'next-auth/react'
 import { motion } from 'framer-motion'
 import { Camera, Sparkles, Heart, Users, ArrowRight, GalleryHorizontalEnd, Star, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export default function LandingView() {
   const { setView, setUsername, username, setUserId, setRoomCode, setIsCreator } = useAppStore()
+  const { data: session } = useSession()
+
+  // Auto-fill username from session
+  if (session?.user?.username && !username) {
+    setUsername(session.user.username)
+    setUserId(session.user.id)
+  }
 
   const handleGetStarted = () => {
     if (!username.trim()) return
@@ -49,10 +57,21 @@ export default function LandingView() {
                 <GalleryHorizontalEnd className="w-4 h-4 mr-1.5" />
                 Gallery
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setView('profile')} className="hidden sm:flex">
-                <Star className="w-4 h-4 mr-1.5" />
-                Profile
-              </Button>
+              {session ? (
+                <div className="hidden sm:flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">{session.user.username}</span>
+                  {session.user.image
+                    ? <img src={session.user.image} className="w-8 h-8 rounded-full" alt="" />
+                    : <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold">{session.user.username?.[0]?.toUpperCase()}</div>
+                  }
+                  <Button variant="ghost" size="sm" onClick={() => signOut()} className="text-xs text-muted-foreground">Sign out</Button>
+                </div>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={() => setView('profile')} className="hidden sm:flex">
+                  <Star className="w-4 h-4 mr-1.5" />
+                  Sign In
+                </Button>
+              )}
             </div>
           </div>
         </div>
