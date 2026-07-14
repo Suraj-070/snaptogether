@@ -28,10 +28,13 @@ export default function JoinRoomView() {
 
     const onRoomJoined = (roomData: any) => {
       setIsCreator(false)
-      setRoomCode(roomData.code || roomCodeUp)
+      const finalCode = roomData.code || roomCodeUp
+      setRoomCode(finalCode)
       setRoomState(roomData)
       setParticipants(roomData.participants || [])
       setIsJoining(false)
+      // Set sentinel so studio.tsx doesn't re-emit join-room and land in a different room
+      sessionStorage.setItem(`snap_joined_${finalCode}`, '1')
       setView('lobby')
       clearTimeout(deadline)
       socket.off('room-joined', onRoomJoined)

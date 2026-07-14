@@ -112,6 +112,8 @@ export default function CreateRoomView() {
       setParticipants(roomData.participants || [])
       setIsCreator(true)
       setIsCreating(false)
+      // Set sentinel so studio.tsx doesn't re-emit create-room and create a second room
+      sessionStorage.setItem(`snap_joined_${roomData.code}`, '1')
       setView('lobby')
       clearTimeout(deadline)
       socket.off('room-created', onRoomCreated)
