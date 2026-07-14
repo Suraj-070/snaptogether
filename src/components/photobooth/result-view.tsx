@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Download, Share2, RotateCcw, Sparkles,
   Camera, Copy, Check, Home, GalleryHorizontalEnd,
-  Save, Pen, Eraser, Trash2, StickerIcon, ChevronLeft, ChevronRight,
+  Save, Pen, Eraser, Trash2, Search, Loader2,
   Minus, Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -29,14 +29,21 @@ interface Sticker {
 }
 
 // ─── Sticker palette ─────────────────────────────────────────────────────────
-const STICKER_PAGES = [
-  ['❤️','💕','💖','💗','💓','🥰','😍','😘','🫶','👫'],
-  ['✨','🌟','⭐','💫','🎉','🎊','🎀','🎁','🎈','🥳'],
-  ['🌸','🌺','🌻','🌹','🌷','🍀','🌈','☀️','🌙','⚡'],
-  ['😂','🤣','😎','🤩','😏','🤪','😜','🥸','🤓','🫠'],
-  ['🐱','🐶','🐻','🦊','🐼','🐨','🦋','🐝','🦄','🐸'],
-  ['🍕','🍔','🍣','🧁','🍦','🍩','🥂','☕','🍓','🍒'],
-]
+// Giphy sticker API — uses your existing key from Groove Together
+// Replace with your own key from developers.giphy.com (free)
+const GIPHY_KEY = process.env.NEXT_PUBLIC_GIPHY_KEY || 'bS0cRf1KVChzdHqPyCXFfpZmgSvooUWB'
+const GIPHY_LIMIT = 20
+
+// Quick-access suggestion tags shown before user searches
+const STICKER_SUGGESTIONS = ['love', 'cute', 'funny', 'party', 'flowers', 'cats', 'fire', 'vibes']
+
+interface GiphySticker {
+  id: string
+  url: string       // original GIF URL
+  preview: string   // small preview URL
+  width: number
+  height: number
+}
 const DRAW_COLORS = ['#ffffff','#000000','#ff3b5c','#ff9500','#ffcc02','#34c759','#30b0c7','#007aff','#af52de','#ff2d55']
 const DRAW_SIZES = [2, 4, 8, 14, 22]
 
@@ -52,7 +59,12 @@ export default function ResultView() {
   const [brushSize, setBrushSize] = useState(1) // index into DRAW_SIZES
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [stickers, setStickers] = useState<Sticker[]>([])
-  const [stickerPage, setStickerPage] = useState(0)
+  const [stickerQuery, setStickerQuery] = useState('')
+  const [stickerResults, setStickerResults] = useState<GiphySticker[]>([])
+  const [stickerLoading, setStickerLoading] = useState(false)
+  const [stickerSearched, setStickerSearched] = useState(false)
+  // Cache of loaded Image objects for canvas drawing (keyed by sticker id)
+  const stickerImageCache = useRef<Map<string, HTMLImageElement>>(new Map())
   const [draggingSticker, setDraggingSticker] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
 
@@ -120,16 +132,29 @@ export default function ResultView() {
       paintStroke(ctx, pts, `hsl(${hue},80%,55%)`, DRAW_SIZES[2], canvas.width)
     })
 
-    // BUG-10 fix: draw stickers directly onto canvas (not just as DOM divs)
-    // This ensures they appear in the downloaded PNG
+    // Draw stickers: if emoji field is a URL (Giphy), use drawImage; else fillText
     activeStickers.forEach(s => {
       const px = s.x * canvas.width
       const py = s.y * canvas.height
-      const size = 60 * s.scale * (canvas.width / 448)
-      ctx.font = `${size}px serif`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(s.emoji, px, py)
+      const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('blob')
+      if (isUrl) {
+        const img = stickerImageCache.current.get(s.id)
+          || [...stickerImageCache.current.values()].find(i => i.src === s.emoji)
+        if (img && img.complete) {
+          const baseSize = 120 * s.scale * (canvas.width / 448)
+          const aspect = img.naturalHeight / img.naturalWidth
+          const w = baseSize
+          const h = baseSize * aspect
+          ctx.drawImage(img, px - w / 2, py - h / 2, w, h)
+        }
+      } else {
+        // Legacy emoji fallback
+        const size = 60 * s.scale * (canvas.width / 448)
+        ctx.font = `${size}px serif`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(s.emoji, px, py)
+      }
     })
   }, [])  // stable — reads from refs, no state deps needed
 
@@ -226,12 +251,58 @@ export default function ResultView() {
     socket.emit('strip-draw-end', { userId: userId || 'me' })
   }
 
+  // ── Giphy sticker search ──
+  const searchGiphy = async (q: string) => {
+    if (!q.trim()) return
+    setStickerLoading(true)
+    setStickerSearched(true)
+    try {
+      const res = await fetch(
+        `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=${GIPHY_LIMIT}&rating=g`
+      )
+      const data = await res.json()
+      const results: GiphySticker[] = (data.data || []).map((item: any) => ({
+        id: item.id,
+        // Use downsized_medium for display (smaller), original for canvas
+        url: item.images.original.url,
+        preview: item.images.fixed_width_small.url,
+        width: Number(item.images.original.width),
+        height: Number(item.images.original.height),
+      }))
+      setStickerResults(results)
+    } catch {
+      setStickerResults([])
+    }
+    setStickerLoading(false)
+  }
+
+  // Preload sticker image into cache so canvas can draw it synchronously
+  const loadStickerImage = (sticker: GiphySticker): Promise<HTMLImageElement> => {
+    if (stickerImageCache.current.has(sticker.id)) {
+      return Promise.resolve(stickerImageCache.current.get(sticker.id)!)
+    }
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => { stickerImageCache.current.set(sticker.id, img); resolve(img) }
+      img.onerror = reject
+      img.src = sticker.url
+    })
+  }
+
   // ── sticker placement ──
-  function placeSticker(emoji: string) {
+  async function placeSticker(giphy: GiphySticker) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const s: Sticker = { id, emoji, x: 0.5, y: 0.5, scale: 1 }
+    // Pre-load image so redraw can use it immediately
+    await loadStickerImage(giphy)
+    const s: Sticker = {
+      id,
+      emoji: giphy.url,      // reuse emoji field to store the URL
+      x: 0.5, y: 0.5, scale: 1,
+    }
     setStickers(prev => [...prev, s])
-    socket.emit('strip-sticker-add', s)
+    // Send sticker ID + url to partner so they can fetch the same image
+    socket.emit('strip-sticker-add', { ...s, giphyId: giphy.id, giphyUrl: giphy.url })
   }
 
   // sticker drag (mouse/touch on sticker layer)
@@ -298,7 +369,16 @@ export default function ResultView() {
         userId: d.userId,
       }])
     }
-    const onStickerAdd = (s: Sticker) => setStickers(prev => [...prev, s])
+    const onStickerAdd = async (data: Sticker & { giphyId?: string; giphyUrl?: string }) => {
+      // If partner placed a Giphy sticker, pre-load the image so canvas can draw it
+      if (data.giphyUrl) {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.onload = () => stickerImageCache.current.set(data.id, img)
+        img.src = data.giphyUrl
+      }
+      setStickers(prev => [...prev, data])
+    }
     const onStickerMove = (d: { id: string; x: number; y: number }) => {
       setStickers(prev => prev.map(s => s.id === d.id ? { ...s, x: d.x, y: d.y } : s))
     }
@@ -495,30 +575,41 @@ export default function ResultView() {
             />
 
             {/* Sticker overlay — positioned absolutely over canvas */}
-            {stickers.map(s => (
-              <div
-                key={s.id}
-                className="absolute select-none"
-                style={{
-                  left: `${s.x * 100}%`,
-                  top: `${s.y * 100}%`,
-                  transform: `translate(-50%, -50%) scale(${s.scale})`,
-                  fontSize: '2.5rem',
-                  lineHeight: 1,
-                  touchAction: 'none',
-                  cursor: 'grab',
-                  filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
-                }}
-                onPointerDown={e => onStickerPointerDown(e, s.id)}
-                onPointerMove={e => onStickerPointerMove(e, s.id)}
-                onPointerUp={onStickerPointerUp}
-              >
-                {s.emoji}
-              </div>
-            ))}
+            {stickers.map(s => {
+              const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('blob')
+              return (
+                <div
+                  key={s.id}
+                  className="absolute select-none"
+                  style={{
+                    left: `${s.x * 100}%`,
+                    top: `${s.y * 100}%`,
+                    transform: `translate(-50%, -50%) scale(${s.scale})`,
+                    touchAction: 'none',
+                    cursor: draggingSticker === s.id ? 'grabbing' : 'grab',
+                    filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.4))',
+                    zIndex: 10,
+                  }}
+                  onPointerDown={e => onStickerPointerDown(e, s.id)}
+                  onPointerMove={e => onStickerPointerMove(e, s.id)}
+                  onPointerUp={onStickerPointerUp}
+                >
+                  {isUrl ? (
+                    <img
+                      src={s.emoji}
+                      alt="sticker"
+                      className="w-16 h-16 object-contain pointer-events-none"
+                      draggable={false}
+                    />
+                  ) : (
+                    <span style={{ fontSize: '2.5rem', lineHeight: 1 }}>{s.emoji}</span>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
-          {/* Sticker picker */}
+          {/* Giphy Sticker picker */}
           <AnimatePresence>
             {tool === 'sticker' && (
               <motion.div
@@ -527,25 +618,75 @@ export default function ResultView() {
                 exit={{ opacity: 0, y: 8 }}
                 className="bg-white/5 rounded-2xl p-3 border border-white/10"
               >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-white/50 font-medium">TAP TO PLACE</span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setStickerPage(p => Math.max(0, p - 1))} disabled={stickerPage === 0} className="p-1 rounded-lg hover:bg-white/10 disabled:opacity-30"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                    <span className="text-[10px] text-white/40">{stickerPage + 1}/{STICKER_PAGES.length}</span>
-                    <button onClick={() => setStickerPage(p => Math.min(STICKER_PAGES.length - 1, p + 1))} disabled={stickerPage === STICKER_PAGES.length - 1} className="p-1 rounded-lg hover:bg-white/10 disabled:opacity-30"><ChevronRight className="w-3.5 h-3.5" /></button>
+                {/* Search bar */}
+                <div className="flex gap-2 mb-3">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={stickerQuery}
+                      onChange={e => setStickerQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && searchGiphy(stickerQuery)}
+                      placeholder="Search stickers..."
+                      className="w-full bg-white/10 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-white/30 outline-none focus:bg-white/15 transition-colors"
+                    />
                   </div>
+                  <button
+                    onClick={() => searchGiphy(stickerQuery)}
+                    disabled={stickerLoading || !stickerQuery.trim()}
+                    className="px-3 py-2 bg-primary rounded-xl text-xs font-medium disabled:opacity-40 transition-opacity"
+                  >
+                    {stickerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Go'}
+                  </button>
                 </div>
-                <div className="grid grid-cols-10 gap-1">
-                  {STICKER_PAGES[stickerPage].map(emoji => (
-                    <button
-                      key={emoji}
-                      onClick={() => placeSticker(emoji)}
-                      className="text-2xl p-1 rounded-lg hover:bg-white/10 active:scale-90 transition-transform"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
+
+                {/* Suggestion tags — shown before first search */}
+                {!stickerSearched && (
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {STICKER_SUGGESTIONS.map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => { setStickerQuery(tag); searchGiphy(tag) }}
+                        className="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-full text-[10px] text-white/60 hover:text-white transition-colors capitalize"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Results grid */}
+                {stickerLoading && (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+                  </div>
+                )}
+
+                {!stickerLoading && stickerSearched && stickerResults.length === 0 && (
+                  <p className="text-center text-white/30 text-xs py-4">No stickers found. Try another search.</p>
+                )}
+
+                {!stickerLoading && stickerResults.length > 0 && (
+                  <>
+                    <div className="grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto no-scrollbar">
+                      {stickerResults.map(sticker => (
+                        <button
+                          key={sticker.id}
+                          onClick={() => placeSticker(sticker)}
+                          className="relative aspect-square rounded-lg overflow-hidden bg-white/5 hover:bg-white/10 hover:scale-105 transition-all active:scale-95"
+                        >
+                          <img
+                            src={sticker.preview}
+                            alt=""
+                            className="w-full h-full object-contain p-1"
+                            loading="lazy"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-white/20 text-center mt-2">Powered by GIPHY</p>
+                  </>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

@@ -6,10 +6,19 @@ import { Camera, Sparkles, Heart, Users, ArrowRight, GalleryHorizontalEnd, Star,
 import { Button } from '@/components/ui/button'
 
 export default function LandingView() {
-  const { setView, setUsername, username, setUserId } = useAppStore()
+  const { setView, setUsername, username, setUserId, setRoomCode, setIsCreator } = useAppStore()
 
   const handleGetStarted = () => {
     if (!username.trim()) return
+    // UX-04: if arriving from a deep link, auto-join that room
+    const pendingJoin = sessionStorage.getItem('snap_pending_join')
+    if (pendingJoin) {
+      sessionStorage.removeItem('snap_pending_join')
+      setRoomCode(pendingJoin)
+      setIsCreator(false)
+      setView('join')
+      return
+    }
     setView('create')
   }
 

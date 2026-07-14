@@ -69,15 +69,19 @@ export default function LobbyView() {
 
   const shareCode = async () => {
     if (!roomCode) return
+    // UX-04: share a deep link so partner can tap and join instantly
+    const joinUrl = `${window.location.origin}/join/${roomCode}`
     if (navigator.share) {
       try {
         await navigator.share({
           title: 'SnapTogether',
-          text: `Join my photobooth room! Code: ${roomCode}`,
+          text: `Join my photobooth! Tap the link or use code ${roomCode}`,
+          url: joinUrl,
         })
       } catch { /* cancelled */ }
     } else {
-      copyCode()
+      await navigator.clipboard.writeText(joinUrl)
+      toast.success('Join link copied!')
     }
   }
 

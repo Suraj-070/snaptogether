@@ -58,12 +58,23 @@ export default function StudioView() {
     const socket: Socket = getSocket()
 
     const joinOrCreate = () => {
-      if (roomState?.code === roomCode) return
+      // BUG-02: use sessionStorage sentinel to prevent duplicate room creation
+      // on socket reconnect. Without this, a reconnect re-emits create-room
+      // which the server rejects (code taken) and creates a new orphan room.
+      const sentinelKey = `snap_joined_${roomCode}`
+      const alreadyJoined = sessionStorage.getItem(sentinelKey) === '1'
+
+      if (alreadyJoined && socket.connected) {
+        // Socket reconnected — re-announce presence without creating a new room
+        socket.emit('rejoin-room', { code: roomCode, username })
+        return
+      }
       if (isCreator) {
         socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: roomCode })
       } else {
         socket.emit('join-room', { code: roomCode, username })
       }
+      sessionStorage.setItem(sentinelKey, '1')
     }
 
     // Measure server clock offset (5 pings, keep lowest-RTT sample)
@@ -81,11 +92,14 @@ export default function StudioView() {
     }
 
     if (socket.connected) {
+      setSocketStatus('connected')
       joinOrCreate()
       syncClock()
     } else {
       socket.once('connect', joinOrCreate)
-      socket.on('connect', syncClock)
+      socket.on('connect', () => { setSocketStatus('connected'); syncClock() })
+      socket.on('connect_error', () => setSocketStatus('error'))
+      socket.on('disconnect', () => setSocketStatus('connecting'))
       socket.connect()
     }
 
@@ -126,6 +140,17 @@ export default function StudioView() {
       } else if (data.room?.filter === 'none') {
         setSelectedFilter('none')
       }
+    })
+
+    // BUG-02: server room expired (restart) — clear sentinel and rejoin fresh
+    socket.on('room-expired', (data: { code: string }) => {
+      sessionStorage.removeItem(`snap_joined_${data.code}`)
+      if (isCreator) {
+        socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: data.code })
+      } else {
+        socket.emit('join-room', { code: data.code, username })
+      }
+      sessionStorage.setItem(`snap_joined_${data.code}`, '1')
     })
 
     socket.on('session-started', (data: any) => {
@@ -199,6 +224,7 @@ export default function StudioView() {
 
   // Camera setup
   const [cameraAttempt, setCameraAttempt] = useState(0)
+  const [socketStatus, setSocketStatus] = useState<'connecting' | 'connected' | 'error'>('connecting')
   useEffect(() => {
     let mounted = true
 
@@ -604,7 +630,7 @@ export default function StudioView() {
                   return (
                     <button
                       key={f.id}
-                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-settings', { filter: f.id }) }}
+                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-filter', { filter: f.id }) }}
                       className="shrink-0 flex flex-col items-center gap-1.5"
                     >
                       {/* Thumbnail — live video frame with filter baked via CSS */}

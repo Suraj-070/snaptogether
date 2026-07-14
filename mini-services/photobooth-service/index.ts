@@ -155,6 +155,36 @@ io.on('connection', (socket) => {
     io.to(code).emit('settings-updated', { room: getRoomInfo(room) })
   })
 
+  // BUG-08: separate filter event any participant can emit (not creator-only)
+  // so guest filter changes also sync to the creator's capture
+  socket.on('update-filter', (data: { filter: string }) => {
+    const code = socket.data.roomCode
+    if (!code) return
+    const room = rooms.get(code)
+    if (!room) return
+    room.filter = data.filter
+    // broadcast to everyone in the room including the sender
+    io.to(code).emit('settings-updated', { room: getRoomInfo(room) })
+  })
+
+  // BUG-02: rejoin-room — reconnecting participant re-announces without creating a new room
+  socket.on('rejoin-room', (data: { code: string; username: string }) => {
+    const room = rooms.get(data.code)
+    if (!room) {
+      // Room expired (server restarted) — tell client to create fresh
+      socket.emit('room-expired', { code: data.code })
+      return
+    }
+    socket.data.roomCode = data.code
+    socket.join(data.code)
+    const existing = room.participants.get(socket.id)
+    if (!existing) {
+      const participant = { id: socket.id, username: data.username, isReady: false, joinedAt: Date.now() }
+      room.participants.set(socket.id, participant)
+    }
+    socket.emit('room-joined', getRoomInfo(room))
+  })
+
   socket.on('enter-studio', () => {
     const code = socket.data.roomCode
     if (!code) return
