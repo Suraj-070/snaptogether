@@ -299,29 +299,35 @@ io.on('connection', (socket) => {
   })
 
   // --- WebRTC signaling ---
+  // All signals relay to the whole room (not specific socket IDs).
+  // Socket IDs can change on reconnect so targeted routing breaks silently.
   socket.on('webrtc-ready', () => {
     const code = socket.data.roomCode
-    if (!code) return
+    if (!code) { console.log('[WS] webrtc-ready: no roomCode'); return }
+    console.log('[WS] webrtc-ready relay from', socket.id, 'to room', code)
     socket.to(code).emit('webrtc-ready', { from: socket.id })
   })
 
   socket.on('webrtc-offer', (data: { sdp: any; to?: string }) => {
     const code = socket.data.roomCode
     if (!code) return
-    if (data.to) io.to(data.to).emit('webrtc-offer', { sdp: data.sdp, from: socket.id })
-    else socket.to(code).emit('webrtc-offer', { sdp: data.sdp, from: socket.id })
+    console.log('[WS] webrtc-offer relay from', socket.id, 'to room', code)
+    // Always broadcast to room — avoids stale socket ID targeting
+    socket.to(code).emit('webrtc-offer', { sdp: data.sdp, from: socket.id })
   })
 
-  socket.on('webrtc-answer', (data: { sdp: any; to: string }) => {
-    if (!socket.data.roomCode) return
-    io.to(data.to).emit('webrtc-answer', { sdp: data.sdp, from: socket.id })
+  socket.on('webrtc-answer', (data: { sdp: any; to?: string }) => {
+    const code = socket.data.roomCode
+    if (!code) return
+    console.log('[WS] webrtc-answer relay from', socket.id, 'to room', code)
+    // Broadcast to room — the initiator ignores answers not meant for them
+    socket.to(code).emit('webrtc-answer', { sdp: data.sdp, from: socket.id })
   })
 
   socket.on('webrtc-ice', (data: { candidate: any; to?: string }) => {
     const code = socket.data.roomCode
     if (!code) return
-    if (data.to) io.to(data.to).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
-    else socket.to(code).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
+    socket.to(code).emit('webrtc-ice', { candidate: data.candidate, from: socket.id })
   })
 
   // Collaborative strip building

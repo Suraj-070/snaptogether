@@ -118,6 +118,12 @@ export function useWebRTC(opts: {
     }
 
     const onOffer = async (data: { sdp: RTCSessionDescriptionInit; from: string }) => {
+      // Ignore offers if we are the initiator — we sent the offer, not receive one
+      if (isInitiatorRef.current) {
+        console.log('[WebRTC] ignoring offer — we are initiator')
+        return
+      }
+      console.log('[WebRTC] received offer from:', data.from)
       peerIdRef.current = data.from
       const pc = await newPc()
       if (!pc || closed) return
@@ -125,18 +131,29 @@ export function useWebRTC(opts: {
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
-        socket.emit('webrtc-answer', { sdp: answer, to: data.from })
+        // No 'to' field — server broadcasts to room
+        socket.emit('webrtc-answer', { sdp: answer })
+        console.log('[WebRTC] answer sent')
       } catch (e) {
         console.warn('[WebRTC] answer failed', e)
       }
     }
 
     const onAnswer = async (data: { sdp: RTCSessionDescriptionInit; from: string }) => {
+      // Ignore answers if we are NOT the initiator
+      if (!isInitiatorRef.current) {
+        console.log('[WebRTC] ignoring answer — we are not initiator')
+        return
+      }
+      console.log('[WebRTC] received answer from:', data.from)
       peerIdRef.current = data.from
       if (!pcRef.current) return
       try {
         if (pcRef.current.signalingState === 'have-local-offer') {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp))
+          console.log('[WebRTC] remote description set from answer')
+        } else {
+          console.warn('[WebRTC] unexpected signalingState for answer:', pcRef.current.signalingState)
         }
       } catch (e) {
         console.warn('[WebRTC] setRemoteDescription failed', e)
