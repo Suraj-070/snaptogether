@@ -9,7 +9,9 @@ async function getIceServers(): Promise<RTCIceServer[]> {
   try {
     const res = await fetch('/api/turn', { cache: 'force-cache' })
     const data = await res.json()
-    return data.iceServers as RTCIceServer[]
+    // Cloudflare returns a single object, not an array — normalise to array
+    const raw = data.iceServers
+    return (Array.isArray(raw) ? raw : [raw]) as RTCIceServer[]
   } catch {
     // Network error — fall back to Google STUN
     return [
