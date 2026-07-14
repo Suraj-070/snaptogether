@@ -402,6 +402,10 @@ io.on('connection', (socket) => {
     const code = socket.data.roomCode
     if (code) socket.to(code).emit('strip-clear-drawing')
   })
+  socket.on('strip-sticker-remove', (data: { id: string }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-sticker-remove', data)
+  })
 })
 
 const PORT = Number(process.env.PORT) || 3004

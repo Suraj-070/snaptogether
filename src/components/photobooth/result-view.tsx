@@ -5,8 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Download, Share2, RotateCcw, Sparkles,
   Camera, Copy, Check, Home, GalleryHorizontalEnd,
-  Save, Pen, Eraser, Trash2, Search, Loader2,
-  Minus, Plus,
+  Save, Pen, Eraser, Trash2, Search, Loader2, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -23,85 +22,101 @@ interface Stroke {
 interface Sticker {
   id: string
   emoji: string
-  x: number   // 0..1 fraction of canvas width
-  y: number   // 0..1 fraction of canvas height
+  x: number
+  y: number
   scale: number
 }
-
-// ─── Sticker palette ─────────────────────────────────────────────────────────
-// Giphy sticker API — uses your existing key from Groove Together
-// Replace with your own key from developers.giphy.com (free)
-const GIPHY_KEY = process.env.NEXT_PUBLIC_GIPHY_KEY || 'bS0cRf1KVChzdHqPyCXFfpZmgSvooUWB'
-const GIPHY_LIMIT = 20
-
-// Quick-access suggestion tags shown before user searches
-const STICKER_SUGGESTIONS = ['love', 'cute', 'funny', 'party', 'flowers', 'cats', 'fire', 'vibes']
-
 interface GiphySticker {
   id: string
-  url: string       // original GIF URL
-  preview: string   // small preview URL
+  url: string
+  preview: string
   width: number
   height: number
 }
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+const GIPHY_KEY = process.env.NEXT_PUBLIC_GIPHY_KEY || 'bS0cRf1KVChzdHqPyCXFfpZmgSvooUWB'
+const STICKER_SUGGESTIONS = ['love', 'cute', 'funny', 'party', 'flowers', 'cats', 'fire', 'vibes']
 const DRAW_COLORS = ['#ffffff','#000000','#ff3b5c','#ff9500','#ffcc02','#34c759','#30b0c7','#007aff','#af52de','#ff2d55']
-const DRAW_SIZES = [2, 4, 8, 14, 22]
+const DRAW_SIZES = [3, 6, 12, 20, 32] // actual pixel sizes at 448px base
 
 export default function ResultView() {
   const {
     finalStripData, aiCaption, roomCode, username, userId, sessionId,
-    capturedPhotos, setView, resetSession, setAiCaption, setFinalStripData,
+    capturedPhotos, setView, resetSession, setAiCaption,
   } = useAppStore()
 
-  // ── editor state ──
-  const [tool, setTool] = useState<'draw' | 'erase' | 'sticker'>('sticker')
+  const [tool, setTool] = useState<'sticker' | 'draw' | 'erase'>('sticker')
   const [color, setColor] = useState('#ff3b5c')
-  const [brushSize, setBrushSize] = useState(1) // index into DRAW_SIZES
+  const [brushSize, setBrushSize] = useState(1)
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [stickers, setStickers] = useState<Sticker[]>([])
+  const [selectedSticker, setSelectedSticker] = useState<string | null>(null)
+
+  // Giphy
   const [stickerQuery, setStickerQuery] = useState('')
   const [stickerResults, setStickerResults] = useState<GiphySticker[]>([])
   const [stickerLoading, setStickerLoading] = useState(false)
   const [stickerSearched, setStickerSearched] = useState(false)
-  // Cache of loaded Image objects for canvas drawing (keyed by sticker id)
   const stickerImageCache = useRef<Map<string, HTMLImageElement>>(new Map())
+
+  // Drag
   const [draggingSticker, setDraggingSticker] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
 
-  // ── other ui ──
+  // Actions
   const [isSaved, setIsSaved] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isGeneratingCaption, setIsGeneratingCaption] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  // ── refs ──
+  // Refs
   const drawCanvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const stripImgRef = useRef<HTMLImageElement | null>(null)
   const isDrawingRef = useRef(false)
   const currentStrokeRef = useRef<{ x: number; y: number }[]>([])
   const remoteStrokesRef = useRef<Map<string, { x: number; y: number }[]>>(new Map())
-  const animFrameRef = useRef<number>(0)
+  const strokesRef = useRef<Stroke[]>([])
+  const stickersRef = useRef<Sticker[]>([])
 
   const socket = getSocket()
 
-  // ── load strip image once ──
-  useEffect(() => {
-    if (!finalStripData) return
-    const img = new Image()
-    img.onload = () => { stripImgRef.current = img; redraw() }
-    img.src = finalStripData
-  }, [finalStripData])
-
-  // Keep latest strokes/stickers in refs so redraw always uses current values
-  // even when called from handleDownload (which can't close over state reliably)
-  const strokesRef = useRef<Stroke[]>([])
-  const stickersRef = useRef<Sticker[]>([])
   useEffect(() => { strokesRef.current = strokes }, [strokes])
   useEffect(() => { stickersRef.current = stickers }, [stickers])
 
-  // ── redraw everything ──
-  // Uses refs (not state) so it's always current even in async contexts like download
+  // paintStroke defined before redraw so redraw can call it
+  const paintStroke = (
+    ctx: CanvasRenderingContext2D,
+    pts: { x: number; y: number }[],
+    col: string,
+    sizeIdx: number,
+    cw: number,
+    ch: number,
+  ) => {
+    if (pts.length < 2) return
+    const scale = cw / 448
+    ctx.save()
+    if (col === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out'
+      ctx.strokeStyle = 'rgba(0,0,0,1)'
+    } else {
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = col
+    }
+    ctx.lineWidth = DRAW_SIZES[sizeIdx] * scale
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(pts[0].x * cw, pts[0].y * ch)
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].x * cw, pts[i].y * ch)
+    }
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  // ── Redraw canvas ──
   const redraw = useCallback((
     overrideStrokes?: Stroke[],
     overrideStickers?: Sticker[],
@@ -115,78 +130,53 @@ export default function ResultView() {
     const activeStrokes = overrideStrokes ?? strokesRef.current
     const activeStickers = overrideStickers ?? stickersRef.current
 
-    // canvas logical size = strip image size (HD)
     canvas.width = img.naturalWidth
     canvas.height = img.naturalHeight
-
-    // draw strip base
     ctx.drawImage(img, 0, 0)
 
-    // draw committed strokes
-    activeStrokes.forEach(s => paintStroke(ctx, s.points, s.color, s.size, canvas.width))
+    activeStrokes.forEach(s => paintStroke(ctx, s.points, s.color, s.size, canvas.width, canvas.height))
 
-    // draw remote in-progress strokes
     remoteStrokesRef.current.forEach((pts, uid) => {
       if (pts.length < 2) return
       const hue = [...uid].reduce((a, c) => a + c.charCodeAt(0), 0) % 360
-      paintStroke(ctx, pts, `hsl(${hue},80%,55%)`, DRAW_SIZES[2], canvas.width)
+      paintStroke(ctx, pts, `hsl(${hue},80%,55%)`, 2, canvas.width, canvas.height)
     })
 
-    // Draw stickers: if emoji field is a URL (Giphy), use drawImage; else fillText
     activeStickers.forEach(s => {
       const px = s.x * canvas.width
       const py = s.y * canvas.height
       const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('blob')
       if (isUrl) {
-        const img = stickerImageCache.current.get(s.id)
+        const cachedImg = stickerImageCache.current.get(s.id)
           || [...stickerImageCache.current.values()].find(i => i.src === s.emoji)
-        if (img && img.complete) {
-          const baseSize = 120 * s.scale * (canvas.width / 448)
-          const aspect = img.naturalHeight / img.naturalWidth
-          const w = baseSize
-          const h = baseSize * aspect
-          ctx.drawImage(img, px - w / 2, py - h / 2, w, h)
+        if (cachedImg && cachedImg.complete) {
+          const baseSize = 130 * s.scale * (canvas.width / 448)
+          const aspect = cachedImg.naturalHeight / cachedImg.naturalWidth
+          ctx.drawImage(cachedImg, px - baseSize / 2, py - (baseSize * aspect) / 2, baseSize, baseSize * aspect)
         }
       } else {
-        // Legacy emoji fallback
-        const size = 60 * s.scale * (canvas.width / 448)
+        const size = 64 * s.scale * (canvas.width / 448)
         ctx.font = `${size}px serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(s.emoji, px, py)
       }
     })
-  }, [])  // stable — reads from refs, no state deps needed
+  }, [])
 
-  // Redraw whenever strokes or stickers change
   useEffect(() => { redraw(strokes, stickers) }, [strokes, stickers, redraw])
 
-  function paintStroke(
-    ctx: CanvasRenderingContext2D,
-    pts: { x: number; y: number }[],
-    col: string,
-    sizeIdx: number,
-    cw: number,
-  ) {
-    if (pts.length < 2) return
-    const scale = cw / 448
-    ctx.save()
-    ctx.strokeStyle = col
-    ctx.lineWidth = DRAW_SIZES[sizeIdx] * scale
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.globalCompositeOperation = col === 'erase' ? 'destination-out' : 'source-over'
-    ctx.beginPath()
-    ctx.moveTo(pts[0].x * cw, pts[0].y * (ctx.canvas.height))
-    for (let i = 1; i < pts.length; i++) {
-      ctx.lineTo(pts[i].x * cw, pts[i].y * ctx.canvas.height)
-    }
-    ctx.stroke()
-    ctx.restore()
-  }
+  // ── Load strip image (after redraw is defined) ──
+  useEffect(() => {
+    if (!finalStripData) return
+    const img = new Image()
+    img.onload = () => { stripImgRef.current = img; redraw() }
+    img.src = finalStripData
+  }, [finalStripData, redraw])
 
-  // ── canvas pointer helpers ──
-  function canvasFraction(e: React.PointerEvent): { x: number; y: number } {
+
+  // ── Pointer helpers ──
+  function canvasFraction(e: React.PointerEvent) {
     const canvas = drawCanvasRef.current!
     const rect = canvas.getBoundingClientRect()
     return {
@@ -196,7 +186,7 @@ export default function ResultView() {
   }
 
   function onPointerDown(e: React.PointerEvent) {
-    if (tool === 'sticker') return
+    if (tool === 'sticker') { setSelectedSticker(null); return }
     e.currentTarget.setPointerCapture(e.pointerId)
     isDrawingRef.current = true
     const pt = canvasFraction(e)
@@ -215,7 +205,6 @@ export default function ResultView() {
     currentStrokeRef.current.push(pt)
     socket.emit('strip-draw-move', { x: pt.x, y: pt.y, userId: userId || 'me' })
 
-    // optimistic local draw (light preview on display canvas)
     const canvas = drawCanvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -225,11 +214,17 @@ export default function ResultView() {
     const last = pts[pts.length - 2]
     const cur = pts[pts.length - 1]
     ctx.save()
-    ctx.strokeStyle = tool === 'erase' ? 'rgba(0,0,0,1)' : color
+    // FIX: eraser must use destination-out, not just a color
+    if (tool === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out'
+      ctx.strokeStyle = 'rgba(0,0,0,1)'
+    } else {
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = color
+    }
     ctx.lineWidth = DRAW_SIZES[brushSize] * (canvas.width / 448)
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.globalCompositeOperation = tool === 'erase' ? 'destination-out' : 'source-over'
     ctx.beginPath()
     ctx.moveTo(last.x * canvas.width, last.y * canvas.height)
     ctx.lineTo(cur.x * canvas.width, cur.y * canvas.height)
@@ -242,41 +237,38 @@ export default function ResultView() {
     isDrawingRef.current = false
     const pts = [...currentStrokeRef.current]
     currentStrokeRef.current = []
-    setStrokes(prev => [...prev, {
-      points: pts,
-      color: tool === 'erase' ? 'erase' : color,
-      size: brushSize,
-      userId: userId || 'me',
-    }])
+    if (pts.length > 1) {
+      setStrokes(prev => [...prev, {
+        points: pts,
+        color: tool === 'erase' ? 'erase' : color,
+        size: brushSize,
+        userId: userId || 'me',
+      }])
+    }
     socket.emit('strip-draw-end', { userId: userId || 'me' })
   }
 
-  // ── Giphy sticker search ──
+  // ── Giphy ──
   const searchGiphy = async (q: string) => {
     if (!q.trim()) return
     setStickerLoading(true)
     setStickerSearched(true)
     try {
       const res = await fetch(
-        `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=${GIPHY_LIMIT}&rating=g`
+        `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=24&rating=g`
       )
       const data = await res.json()
-      const results: GiphySticker[] = (data.data || []).map((item: any) => ({
+      setStickerResults((data.data || []).map((item: any) => ({
         id: item.id,
-        // Use downsized_medium for display (smaller), original for canvas
         url: item.images.original.url,
         preview: item.images.fixed_width_small.url,
         width: Number(item.images.original.width),
         height: Number(item.images.original.height),
-      }))
-      setStickerResults(results)
-    } catch {
-      setStickerResults([])
-    }
+      })))
+    } catch { setStickerResults([]) }
     setStickerLoading(false)
   }
 
-  // Preload sticker image into cache so canvas can draw it synchronously
   const loadStickerImage = (sticker: GiphySticker): Promise<HTMLImageElement> => {
     if (stickerImageCache.current.has(sticker.id)) {
       return Promise.resolve(stickerImageCache.current.get(sticker.id)!)
@@ -290,25 +282,25 @@ export default function ResultView() {
     })
   }
 
-  // ── sticker placement ──
   async function placeSticker(giphy: GiphySticker) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    // Pre-load image so redraw can use it immediately
     await loadStickerImage(giphy)
-    const s: Sticker = {
-      id,
-      emoji: giphy.url,      // reuse emoji field to store the URL
-      x: 0.5, y: 0.5, scale: 1,
-    }
+    const s: Sticker = { id, emoji: giphy.url, x: 0.5, y: 0.5, scale: 1 }
     setStickers(prev => [...prev, s])
-    // Send sticker ID + url to partner so they can fetch the same image
     socket.emit('strip-sticker-add', { ...s, giphyId: giphy.id, giphyUrl: giphy.url })
   }
 
-  // sticker drag (mouse/touch on sticker layer)
+  function removeSticker(id: string) {
+    setStickers(prev => prev.filter(s => s.id !== id))
+    setSelectedSticker(null)
+    socket.emit('strip-sticker-remove', { id })
+  }
+
+  // ── Sticker drag ──
   function onStickerPointerDown(e: React.PointerEvent, id: string) {
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
+    setSelectedSticker(id)
     setDraggingSticker(id)
     const canvas = drawCanvasRef.current!
     const rect = canvas.getBoundingClientRect()
@@ -327,11 +319,9 @@ export default function ResultView() {
     setStickers(prev => prev.map(s => s.id === id ? { ...s, x: nx, y: ny } : s))
     socket.emit('strip-sticker-move', { id, x: nx, y: ny })
   }
-  function onStickerPointerUp() {
-    setDraggingSticker(null)
-  }
+  function onStickerPointerUp() { setDraggingSticker(null) }
 
-  // ── socket listeners ──
+  // ── Socket listeners ──
   useEffect(() => {
     const onDrawStart = (d: any) => {
       remoteStrokesRef.current.set(d.userId, [{ x: d.x, y: d.y }])
@@ -340,7 +330,6 @@ export default function ResultView() {
       const pts = remoteStrokesRef.current.get(d.userId) || []
       pts.push({ x: d.x, y: d.y })
       remoteStrokesRef.current.set(d.userId, pts)
-      // lightweight redraw just the incremental segment
       const canvas = drawCanvasRef.current
       if (!canvas || pts.length < 2) return
       const ctx = canvas.getContext('2d')
@@ -360,17 +349,10 @@ export default function ResultView() {
     const onDrawEnd = (d: any) => {
       const pts = remoteStrokesRef.current.get(d.userId) || []
       remoteStrokesRef.current.delete(d.userId)
-      // commit remote stroke (hue-based colour, fixed size)
       const hue = [...d.userId].reduce((a: number, c: string) => a + c.charCodeAt(0), 0) % 360
-      setStrokes(prev => [...prev, {
-        points: pts,
-        color: `hsl(${hue},80%,55%)`,
-        size: 2,
-        userId: d.userId,
-      }])
+      setStrokes(prev => [...prev, { points: pts, color: `hsl(${hue},80%,55%)`, size: 2, userId: d.userId }])
     }
-    const onStickerAdd = async (data: Sticker & { giphyId?: string; giphyUrl?: string }) => {
-      // If partner placed a Giphy sticker, pre-load the image so canvas can draw it
+    const onStickerAdd = async (data: Sticker & { giphyUrl?: string }) => {
       if (data.giphyUrl) {
         const img = new Image()
         img.crossOrigin = 'anonymous'
@@ -382,13 +364,17 @@ export default function ResultView() {
     const onStickerMove = (d: { id: string; x: number; y: number }) => {
       setStickers(prev => prev.map(s => s.id === d.id ? { ...s, x: d.x, y: d.y } : s))
     }
-    const onClearDrawing = () => { setStrokes([]); redraw() }
+    const onStickerRemove = (d: { id: string }) => {
+      setStickers(prev => prev.filter(s => s.id !== d.id))
+    }
+    const onClearDrawing = () => { setStrokes([]) }
 
     socket.on('strip-draw-start', onDrawStart)
     socket.on('strip-draw-move', onDrawMove)
     socket.on('strip-draw-end', onDrawEnd)
     socket.on('strip-sticker-add', onStickerAdd)
     socket.on('strip-sticker-move', onStickerMove)
+    socket.on('strip-sticker-remove', onStickerRemove)
     socket.on('strip-clear-drawing', onClearDrawing)
     return () => {
       socket.off('strip-draw-start', onDrawStart)
@@ -396,26 +382,23 @@ export default function ResultView() {
       socket.off('strip-draw-end', onDrawEnd)
       socket.off('strip-sticker-add', onStickerAdd)
       socket.off('strip-sticker-move', onStickerMove)
+      socket.off('strip-sticker-remove', onStickerRemove)
       socket.off('strip-clear-drawing', onClearDrawing)
     }
-  }, [socket, redraw])
+  }, [socket])
 
-  // ── HD download ──
+  // ── Download ──
   const handleDownload = () => {
     const canvas = drawCanvasRef.current
     if (!canvas) return
-    // Pass current stickers/strokes explicitly so the download canvas
-    // always reflects the latest state (BUG-10 fix)
     redraw(strokesRef.current, stickersRef.current)
-    // Use setTimeout instead of rAF — rAF fires before the canvas
-    // context finishes flushing on some mobile browsers
     setTimeout(() => {
       const link = document.createElement('a')
       link.download = `snaptogether-${roomCode}-${Date.now()}.png`
       link.href = canvas.toDataURL('image/png', 1.0)
       link.click()
       toast.success('HD strip saved! 🎉')
-    }, 100)
+    }, 120)
   }
 
   const handleShare = async () => {
@@ -425,14 +408,9 @@ export default function ResultView() {
       const blob = await new Promise<Blob>((res, rej) =>
         canvas.toBlob(b => b ? res(b) : rej(), 'image/png', 1.0)
       )
-      const file = new File([blob], 'snaptogether-strip.png', { type: 'image/png' })
-      if (navigator.share) {
-        await navigator.share({ title: 'SnapTogether Memory', files: [file] })
-      } else {
-        throw new Error('no share')
-      }
+      await navigator.share({ title: 'SnapTogether Memory', files: [new File([blob], 'snaptogether.png', { type: 'image/png' })] })
     } catch {
-      navigator.clipboard.writeText(`Check out my SnapTogether memory! Room: ${roomCode}`)
+      navigator.clipboard.writeText(`${window.location.origin}/join/${roomCode}`)
       toast.success('Link copied!')
     }
   }
@@ -455,16 +433,9 @@ export default function ResultView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, userId, stripData, caption: aiCaption, isFavorite: false }),
       })
-      await fetch(`/api/rooms/${roomCode}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'completed' }),
-      })
       setIsSaved(true)
       toast.success('Memory saved!')
-    } catch {
-      toast.error('Failed to save memory')
-    }
+    } catch { toast.error('Failed to save memory') }
     setIsSaving(false)
   }
 
@@ -474,109 +445,253 @@ export default function ResultView() {
       const res = await fetch('/api/ai/caption', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'caption', context: `${capturedPhotos.length} photos in a shared photobooth session.` }),
+        body: JSON.stringify({ type: 'caption', context: `${capturedPhotos.length} photos` }),
       })
       const data = await res.json()
       setAiCaption(data.caption)
-    } catch { toast.error('Failed to generate caption') }
+    } catch { toast.error('Failed') }
     setIsGeneratingCaption(false)
   }
 
-  const handleClearDrawing = () => {
-    setStrokes([])
-    socket.emit('strip-clear-drawing')
-  }
-
-  // ─── render ───────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen flex flex-col bg-[#0e0e12] text-white">
+
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-black/60 backdrop-blur-xl border-b border-white/10">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-black/70 backdrop-blur-xl border-b border-white/8">
+        <div className="max-w-6xl mx-auto px-4 h-13 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Camera className="w-5 h-5 text-primary" />
+            <Camera className="w-4 h-4 text-primary" />
             <span className="font-semibold text-sm">Decorate Your Strip</span>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setView('gallery')} className="text-white/60 hover:text-white">
-            <GalleryHorizontalEnd className="w-4 h-4 mr-1" />
-            Gallery
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={handleDownload} className="text-white/60 hover:text-white text-xs gap-1.5">
+              <Download className="w-3.5 h-3.5" /> Save HD
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setView('gallery')} className="text-white/60 hover:text-white">
+              <GalleryHorizontalEnd className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl mx-auto w-full px-3 py-4 flex flex-col lg:flex-row gap-4">
+      <main className="flex-1 max-w-6xl mx-auto w-full px-3 py-4 flex flex-col lg:flex-row gap-4">
 
-        {/* ── Left: canvas editor ── */}
-        <div className="flex-1 flex flex-col gap-3">
+        {/* ── LEFT: Sticker panel (on desktop) / top (on mobile) ── */}
+        <div className="lg:w-72 flex flex-col gap-3 order-2 lg:order-1">
 
-          {/* Tool bar */}
-          <div className="flex items-center gap-2 flex-wrap">
+          {/* Giphy search — ALWAYS visible at top */}
+          <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
+            <div className="px-3 pt-3 pb-2">
+              <div className="flex items-center gap-1.5 mb-2">
+                <span className="text-xs font-semibold text-white/50 tracking-wider uppercase">Stickers</span>
+                <span className="text-[9px] text-white/25">Powered by GIPHY</span>
+              </div>
+
+              {/* Search bar */}
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={stickerQuery}
+                    onChange={e => setStickerQuery(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && searchGiphy(stickerQuery)}
+                    placeholder="Search stickers..."
+                    className="w-full bg-white/10 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-white/30 outline-none focus:bg-white/15 transition-colors"
+                  />
+                </div>
+                <button
+                  onClick={() => searchGiphy(stickerQuery)}
+                  disabled={stickerLoading || !stickerQuery.trim()}
+                  className="px-3 py-2 bg-primary rounded-xl text-xs font-medium disabled:opacity-40 shrink-0"
+                >
+                  {stickerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Go'}
+                </button>
+              </div>
+
+              {/* Suggestion tags */}
+              {!stickerSearched && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {STICKER_SUGGESTIONS.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={() => { setStickerQuery(tag); searchGiphy(tag) }}
+                      className="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-full text-[10px] text-white/60 hover:text-white transition-colors capitalize"
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Results */}
+            {stickerLoading && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+              </div>
+            )}
+            {!stickerLoading && stickerSearched && stickerResults.length === 0 && (
+              <p className="text-center text-white/30 text-xs py-6">No stickers found.</p>
+            )}
+            {!stickerLoading && stickerResults.length > 0 && (
+              <div className="grid grid-cols-4 gap-1 p-2 max-h-64 lg:max-h-96 overflow-y-auto">
+                {stickerResults.map(sticker => (
+                  <button
+                    key={sticker.id}
+                    onClick={() => placeSticker(sticker)}
+                    className="aspect-square rounded-lg overflow-hidden bg-white/5 hover:bg-white/15 hover:scale-105 transition-all active:scale-95 p-1"
+                  >
+                    <img src={sticker.preview} alt="" className="w-full h-full object-contain" loading="lazy" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Placed stickers list — with remove button */}
+          {stickers.length > 0 && (
+            <div className="bg-white/5 rounded-2xl border border-white/10 p-3">
+              <p className="text-[10px] text-white/40 font-semibold tracking-wider uppercase mb-2">Placed stickers</p>
+              <div className="flex flex-wrap gap-2">
+                {stickers.map((s, i) => {
+                  const isUrl = s.emoji.startsWith('http')
+                  return (
+                    <div key={s.id} className="relative group">
+                      <button
+                        onClick={() => setSelectedSticker(s.id === selectedSticker ? null : s.id)}
+                        className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all ${selectedSticker === s.id ? 'border-primary' : 'border-white/10'}`}
+                      >
+                        {isUrl ? (
+                          <img src={s.emoji} alt="" className="w-full h-full object-contain bg-white/5" />
+                        ) : (
+                          <span className="text-xl flex items-center justify-center h-full">{s.emoji}</span>
+                        )}
+                      </button>
+                      {/* Remove button */}
+                      <button
+                        onClick={() => removeSticker(s.id)}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-2.5 h-2.5 text-white" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Draw tools */}
+          <div className="bg-white/5 rounded-2xl border border-white/10 p-3 flex flex-col gap-3">
             {/* Tool switcher */}
-            <div className="flex rounded-xl overflow-hidden border border-white/10">
+            <div className="grid grid-cols-3 gap-1 bg-white/5 rounded-xl p-1">
               {([
-                { id: 'sticker', icon: <span className="text-base">🎭</span>, label: 'Sticker' },
-                { id: 'draw',    icon: <Pen className="w-4 h-4" />,          label: 'Draw' },
-                { id: 'erase',   icon: <Eraser className="w-4 h-4" />,       label: 'Erase' },
-              ] as const).map(t => (
+                { id: 'sticker' as const, icon: '🎭', label: 'Sticker' },
+                { id: 'draw' as const, icon: <Pen className="w-3.5 h-3.5" />, label: 'Draw' },
+                { id: 'erase' as const, icon: <Eraser className="w-3.5 h-3.5" />, label: 'Erase' },
+              ]).map(t => (
                 <button
                   key={t.id}
                   onClick={() => setTool(t.id)}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
-                    tool === t.id ? 'bg-primary text-primary-foreground' : 'bg-white/5 text-white/60 hover:bg-white/10'
+                  className={`flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-medium transition-all ${
+                    tool === t.id ? 'bg-primary text-white shadow' : 'text-white/50 hover:text-white hover:bg-white/10'
                   }`}
                 >
-                  {t.icon}{t.label}
+                  <span className="text-sm">{t.icon}</span>
+                  {t.label}
                 </button>
               ))}
             </div>
 
-            {/* Draw options */}
-            {(tool === 'draw') && (
-              <>
-                <div className="flex gap-1">
+            {/* Color picker — shown for draw */}
+            {tool === 'draw' && (
+              <div>
+                <p className="text-[10px] text-white/40 mb-2 uppercase tracking-wider">Color</p>
+                <div className="grid grid-cols-5 gap-2">
                   {DRAW_COLORS.map(c => (
                     <button
                       key={c}
                       onClick={() => setColor(c)}
-                      className={`w-6 h-6 rounded-full border-2 transition-transform ${color === c ? 'scale-125 border-white' : 'border-transparent'}`}
-                      style={{ backgroundColor: c }}
-                    />
+                      className="relative w-full aspect-square rounded-lg border-2 transition-all hover:scale-110"
+                      style={{ backgroundColor: c, borderColor: color === c ? 'white' : 'transparent' }}
+                    >
+                      {color === c && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-white drop-shadow" />
+                        </div>
+                      )}
+                    </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-1 bg-white/5 rounded-xl px-2 py-1">
-                  <button onClick={() => setBrushSize(s => Math.max(0, s - 1))} className="text-white/60 hover:text-white p-0.5"><Minus className="w-3 h-3" /></button>
-                  <span className="text-xs text-white/70 w-4 text-center">{DRAW_SIZES[brushSize]}</span>
-                  <button onClick={() => setBrushSize(s => Math.min(DRAW_SIZES.length - 1, s + 1))} className="text-white/60 hover:text-white p-0.5"><Plus className="w-3 h-3" /></button>
-                </div>
-              </>
+              </div>
             )}
 
+            {/* Brush size — visual dots */}
+            {(tool === 'draw' || tool === 'erase') && (
+              <div>
+                <p className="text-[10px] text-white/40 mb-2 uppercase tracking-wider">
+                  {tool === 'erase' ? 'Eraser size' : 'Brush size'}
+                </p>
+                <div className="flex items-center justify-between px-1">
+                  {DRAW_SIZES.map((size, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setBrushSize(i)}
+                      className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all ${
+                        brushSize === i ? 'bg-primary/20 ring-2 ring-primary' : 'hover:bg-white/10'
+                      }`}
+                    >
+                      <div
+                        className="rounded-full"
+                        style={{
+                          width: Math.min(6 + i * 5, 28),
+                          height: Math.min(6 + i * 5, 28),
+                          backgroundColor: tool === 'erase' ? '#ffffff40' : (brushSize === i ? color : '#ffffff50'),
+                        }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Clear drawings */}
             <button
-              onClick={handleClearDrawing}
-              className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-white/50 hover:text-red-400 text-xs transition-colors"
+              onClick={() => { setStrokes([]); socket.emit('strip-clear-drawing') }}
+              className="flex items-center justify-center gap-2 py-2 rounded-xl bg-white/5 hover:bg-red-500/15 text-white/40 hover:text-red-400 text-xs transition-colors"
             >
-              <Trash2 className="w-3.5 h-3.5" /> Clear
+              <Trash2 className="w-3.5 h-3.5" /> Clear all drawings
             </button>
           </div>
+        </div>
 
-          {/* Canvas + sticker overlay */}
+        {/* ── CENTER: Strip canvas ── */}
+        <div className="flex-1 flex flex-col items-center gap-4 order-1 lg:order-2">
+          {/* Strip frame — constrained height so all 4 photos visible */}
           <div
             ref={containerRef}
-            className="relative rounded-2xl overflow-hidden shadow-2xl bg-black select-none"
+            className="relative w-full max-w-sm lg:max-w-xs xl:max-w-sm select-none mx-auto"
             style={{ cursor: tool === 'draw' || tool === 'erase' ? 'crosshair' : 'default' }}
           >
-            <canvas
-              ref={drawCanvasRef}
-              className="w-full h-auto block"
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerLeave={onPointerUp}
-            />
+            {/* Outer frame */}
+            <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10 bg-black">
+              <canvas
+                ref={drawCanvasRef}
+                className="w-full h-auto block"
+                style={{ touchAction: 'none' }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerLeave={onPointerUp}
+              />
+            </div>
 
-            {/* Sticker overlay — positioned absolutely over canvas */}
+            {/* Sticker overlay */}
             {stickers.map(s => {
               const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('blob')
+              const isSelected = selectedSticker === s.id
               return (
                 <div
                   key={s.id}
@@ -587,7 +702,6 @@ export default function ResultView() {
                     transform: `translate(-50%, -50%) scale(${s.scale})`,
                     touchAction: 'none',
                     cursor: draggingSticker === s.id ? 'grabbing' : 'grab',
-                    filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.4))',
                     zIndex: 10,
                   }}
                   onPointerDown={e => onStickerPointerDown(e, s.id)}
@@ -595,163 +709,85 @@ export default function ResultView() {
                   onPointerUp={onStickerPointerUp}
                 >
                   {isUrl ? (
-                    <img
-                      src={s.emoji}
-                      alt="sticker"
-                      className="w-16 h-16 object-contain pointer-events-none"
-                      draggable={false}
-                    />
+                    <img src={s.emoji} alt="sticker" className="w-14 h-14 object-contain pointer-events-none drop-shadow-lg" draggable={false} />
                   ) : (
-                    <span style={{ fontSize: '2.5rem', lineHeight: 1 }}>{s.emoji}</span>
+                    <span className="text-4xl drop-shadow-lg" style={{ lineHeight: 1 }}>{s.emoji}</span>
+                  )}
+                  {/* Remove button on selected sticker */}
+                  {isSelected && (
+                    <button
+                      onPointerDown={e => { e.stopPropagation(); removeSticker(s.id) }}
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center shadow-lg z-20"
+                    >
+                      <X className="w-3 h-3 text-white" />
+                    </button>
                   )}
                 </div>
               )
             })}
           </div>
 
-          {/* Giphy Sticker picker */}
-          <AnimatePresence>
-            {tool === 'sticker' && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                className="bg-white/5 rounded-2xl p-3 border border-white/10"
+          {/* Action buttons below strip */}
+          <div className="w-full max-w-sm lg:max-w-xs xl:max-w-sm flex flex-col gap-2">
+            <Button size="lg" onClick={handleDownload} className="w-full rounded-2xl bg-primary hover:bg-primary/90">
+              <Download className="w-4 h-4 mr-2" /> Download HD
+            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={handleShare} className="rounded-xl border-white/15 text-white hover:bg-white/10">
+                <Share2 className="w-4 h-4 mr-2" /> Share
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleSaveMemory}
+                disabled={isSaving || isSaved}
+                className={`rounded-xl border-white/15 text-white hover:bg-white/10 ${isSaved ? 'border-green-500/40 text-green-400' : ''}`}
               >
-                {/* Search bar */}
-                <div className="flex gap-2 mb-3">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
-                    <input
-                      type="text"
-                      value={stickerQuery}
-                      onChange={e => setStickerQuery(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && searchGiphy(stickerQuery)}
-                      placeholder="Search stickers..."
-                      className="w-full bg-white/10 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-white/30 outline-none focus:bg-white/15 transition-colors"
-                    />
-                  </div>
-                  <button
-                    onClick={() => searchGiphy(stickerQuery)}
-                    disabled={stickerLoading || !stickerQuery.trim()}
-                    className="px-3 py-2 bg-primary rounded-xl text-xs font-medium disabled:opacity-40 transition-opacity"
-                  >
-                    {stickerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Go'}
-                  </button>
-                </div>
-
-                {/* Suggestion tags — shown before first search */}
-                {!stickerSearched && (
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    {STICKER_SUGGESTIONS.map(tag => (
-                      <button
-                        key={tag}
-                        onClick={() => { setStickerQuery(tag); searchGiphy(tag) }}
-                        className="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-full text-[10px] text-white/60 hover:text-white transition-colors capitalize"
-                      >
-                        {tag}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Results grid */}
-                {stickerLoading && (
-                  <div className="flex items-center justify-center py-6">
-                    <Loader2 className="w-5 h-5 animate-spin text-white/40" />
-                  </div>
-                )}
-
-                {!stickerLoading && stickerSearched && stickerResults.length === 0 && (
-                  <p className="text-center text-white/30 text-xs py-4">No stickers found. Try another search.</p>
-                )}
-
-                {!stickerLoading && stickerResults.length > 0 && (
-                  <>
-                    <div className="grid grid-cols-4 gap-1.5 max-h-48 overflow-y-auto no-scrollbar">
-                      {stickerResults.map(sticker => (
-                        <button
-                          key={sticker.id}
-                          onClick={() => placeSticker(sticker)}
-                          className="relative aspect-square rounded-lg overflow-hidden bg-white/5 hover:bg-white/10 hover:scale-105 transition-all active:scale-95"
-                        >
-                          <img
-                            src={sticker.preview}
-                            alt=""
-                            className="w-full h-full object-contain p-1"
-                            loading="lazy"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-[9px] text-white/20 text-center mt-2">Powered by GIPHY</p>
-                  </>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
+                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : isSaved ? <><Check className="w-4 h-4 mr-1" />Saved</>
+                  : <><Save className="w-4 h-4 mr-2" />Gallery</>}
+              </Button>
+            </div>
+          </div>
         </div>
 
-        {/* ── Right: actions panel ── */}
-        <div className="lg:w-64 flex flex-col gap-4">
-
+        {/* ── RIGHT: Caption + room info ── */}
+        <div className="lg:w-56 flex flex-col gap-3 order-3">
           {/* AI Caption */}
           <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
             <div className="flex items-center gap-2 mb-2">
               <Sparkles className="w-4 h-4 text-primary" />
-              <span className="text-xs font-medium text-white/60">AI CAPTION</span>
+              <span className="text-xs font-semibold text-white/50 tracking-wider uppercase">Caption</span>
             </div>
-            <p className="text-sm font-medium leading-snug mb-3">{aiCaption || 'A moment worth remembering ✨'}</p>
-            <Button variant="outline" size="sm" onClick={handleNewCaption} disabled={isGeneratingCaption} className="w-full rounded-xl border-white/15 text-white/70 hover:text-white">
-              {isGeneratingCaption ? (
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full" />
-              ) : <RotateCcw className="w-3.5 h-3.5 mr-1.5" />}
-              New Caption
-            </Button>
+            <p className="text-sm leading-snug mb-3 text-white/90">{aiCaption || 'A moment worth remembering ✨'}</p>
+            <button
+              onClick={handleNewCaption}
+              disabled={isGeneratingCaption}
+              className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors"
+            >
+              {isGeneratingCaption
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <RotateCcw className="w-3 h-3" />}
+              New caption
+            </button>
           </div>
 
           {/* Room code */}
-          <div className="bg-white/5 rounded-2xl p-4 border border-white/10 text-center">
-            <p className="text-[10px] text-white/40 mb-1 tracking-widest">ROOM</p>
+          <div className="bg-white/5 rounded-2xl p-3 border border-white/10 text-center">
+            <p className="text-[9px] text-white/30 mb-1 tracking-widest uppercase">Room</p>
             <div className="flex items-center justify-center gap-2">
-              <span className="font-mono text-lg font-bold tracking-widest">{roomCode}</span>
+              <span className="font-mono text-base font-bold tracking-widest">{roomCode}</span>
               <button onClick={() => { navigator.clipboard.writeText(roomCode); setCopied(true); setTimeout(() => setCopied(false), 2000) }} className="p-1 rounded-lg hover:bg-white/10">
-                {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-white/40" />}
+                {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-white/40" />}
               </button>
             </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="flex flex-col gap-2">
-            <Button size="lg" onClick={handleDownload} className="w-full rounded-2xl py-5 bg-primary hover:bg-primary/90">
-              <Download className="w-5 h-5 mr-2" />
-              Download HD
-            </Button>
-            <Button variant="outline" size="lg" onClick={handleShare} className="w-full rounded-2xl py-5 border-white/15 text-white hover:bg-white/10">
-              <Share2 className="w-5 h-5 mr-2" />
-              Share
-            </Button>
-            <Button
-              variant="outline" size="lg"
-              onClick={handleSaveMemory}
-              disabled={isSaving || isSaved}
-              className={`w-full rounded-2xl py-5 border-white/15 text-white hover:bg-white/10 ${isSaved ? 'border-green-500/40 text-green-400' : ''}`}
-            >
-              {isSaving ? (
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }} className="w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
-              ) : isSaved ? (
-                <><Check className="w-5 h-5 mr-2" />Saved!</>
-              ) : (
-                <><Save className="w-5 h-5 mr-2" />Save to Gallery</>
-              )}
-            </Button>
-          </div>
-
           {/* New session */}
-          <button onClick={resetSession} className="text-sm text-white/30 hover:text-white/60 transition-colors flex items-center justify-center gap-1.5 py-2">
-            <Home className="w-4 h-4" /> Start New Session
+          <button onClick={resetSession} className="text-xs text-white/25 hover:text-white/50 transition-colors flex items-center justify-center gap-1.5 py-2">
+            <Home className="w-3.5 h-3.5" /> New session
           </button>
         </div>
+
       </main>
     </div>
   )
