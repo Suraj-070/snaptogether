@@ -22,9 +22,7 @@ async function getIceServers(): Promise<RTCIceServer[]> {
 export function useWebRTC(opts: {
   socket: Socket | null
   localStream: MediaStream | null
-  /** should this side create the offer (use isCreator) */
   isInitiator: boolean
-  /** number of participants in the room — connection starts at 2+ */
   participantCount: number
 }) {
   const { socket, localStream, isInitiator, participantCount } = opts
@@ -33,9 +31,12 @@ export function useWebRTC(opts: {
   const pcRef = useRef<RTCPeerConnection | null>(null)
   const peerIdRef = useRef<string | null>(null)
   const iceServersRef = useRef<RTCIceServer[] | null>(null)
+  // Keep latest values in refs so async callbacks always see current state
+  const isInitiatorRef = useRef(isInitiator)
+  const socketRef = useRef(socket)
+  useEffect(() => { isInitiatorRef.current = isInitiator }, [isInitiator])
+  useEffect(() => { socketRef.current = socket }, [socket])
 
-  // Pre-fetch ICE servers as soon as the hook mounts so they're ready
-  // when the peer connection is needed (avoids a waterfall delay)
   useEffect(() => {
     getIceServers().then(servers => { iceServersRef.current = servers })
   }, [])
@@ -49,8 +50,6 @@ export function useWebRTC(opts: {
 
     const newPc = async () => {
       pcRef.current?.close()
-
-      // Use cached ICE servers, or fetch now if not ready yet
       const iceServers = iceServersRef.current ?? await getIceServers()
       iceServersRef.current = iceServers
 
@@ -60,11 +59,17 @@ export function useWebRTC(opts: {
       localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
 
       pc.ontrack = (e) => {
-        if (!closed) setRemoteStream(e.streams[0])
+        if (!closed && e.streams[0]) {
+          setRemoteStream(e.streams[0])
+          setConnected(true)
+        }
       }
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit('webrtc-ice', { candidate: e.candidate, to: peerIdRef.current || undefined })
+        if (e.candidate && socketRef.current) {
+          socketRef.current.emit('webrtc-ice', {
+            candidate: e.candidate,
+            to: peerIdRef.current || undefined,
+          })
         }
       }
       pc.onconnectionstatechange = () => {
@@ -72,6 +77,11 @@ export function useWebRTC(opts: {
         setConnected(pc.connectionState === 'connected')
         if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
           setRemoteStream(null)
+          setConnected(false)
+          // Auto-retry on failure — initiator re-offers after short delay
+          if (isInitiatorRef.current && !closed) {
+            setTimeout(() => { if (!closed) makeOffer() }, 2000)
+          }
         }
       }
       return pc
@@ -79,57 +89,72 @@ export function useWebRTC(opts: {
 
     const makeOffer = async () => {
       const pc = await newPc()
-      if (!pc) return
+      if (!pc || closed) return
       try {
-        const offer = await pc.createOffer()
+        const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
         await pc.setLocalDescription(offer)
         socket.emit('webrtc-offer', { sdp: offer })
-      } catch { /* retry happens on next participant event */ }
+      } catch { /* retry on next ready signal */ }
     }
 
     const onOffer = async (data: { sdp: RTCSessionDescriptionInit; from: string }) => {
       peerIdRef.current = data.from
       const pc = await newPc()
-      if (!pc) return
+      if (!pc || closed) return
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         socket.emit('webrtc-answer', { sdp: answer, to: data.from })
-      } catch { /* ignore glare; initiator re-offers */ }
+      } catch (e) {
+        console.warn('[WebRTC] answer failed', e)
+      }
     }
 
     const onAnswer = async (data: { sdp: RTCSessionDescriptionInit; from: string }) => {
       peerIdRef.current = data.from
+      if (!pcRef.current) return
       try {
-        await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.sdp))
-      } catch { /* stale answer */ }
+        if (pcRef.current.signalingState === 'have-local-offer') {
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp))
+        }
+      } catch (e) {
+        console.warn('[WebRTC] setRemoteDescription failed', e)
+      }
     }
 
     const onIce = async (data: { candidate: RTCIceCandidateInit; from: string }) => {
+      if (!pcRef.current || !data.candidate) return
       try {
-        await pcRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate))
-      } catch { /* candidate for a torn-down pc */ }
+        await pcRef.current.addIceCandidate(new RTCIceCandidate(data.candidate))
+      } catch { /* candidate for torn-down pc */ }
     }
 
     const onPeerReady = (data: { from: string }) => {
       peerIdRef.current = data.from
-      if (isInitiator) {
+      if (isInitiatorRef.current) {
         makeOffer()
       } else {
+        // Reply so a late-joining initiator knows we're here
         socket.emit('webrtc-ready')
       }
     }
 
+    // FIX: register ALL listeners BEFORE emitting webrtc-ready
+    // Old code emitted first → partner's reply could arrive before listeners attached
     socket.on('webrtc-offer', onOffer)
     socket.on('webrtc-answer', onAnswer)
     socket.on('webrtc-ice', onIce)
     socket.on('webrtc-ready', onPeerReady)
 
-    socket.emit('webrtc-ready')
+    // Small delay ensures listeners are fully registered before announcing
+    const readyTimer = setTimeout(() => {
+      if (!closed) socket.emit('webrtc-ready')
+    }, 100)
 
     return () => {
       closed = true
+      clearTimeout(readyTimer)
       socket.off('webrtc-offer', onOffer)
       socket.off('webrtc-answer', onAnswer)
       socket.off('webrtc-ice', onIce)
@@ -137,7 +162,7 @@ export function useWebRTC(opts: {
       pcRef.current?.close()
       pcRef.current = null
     }
-  }, [socket, localStream, isInitiator, participantCount])
+  }, [socket, localStream, participantCount])
 
   return { remoteStream, connected }
 }

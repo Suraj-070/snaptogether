@@ -298,8 +298,10 @@ export default function StudioView() {
   }, [cameraAttempt])
 
   // --- Live partner video (WebRTC) ---
+  // BUG FIX: always use getSocket() — socketRef.current is null on first render
+  // because it's set inside a useEffect. getSocket() returns the same singleton.
   const { remoteStream, connected: peerConnected } = useWebRTC({
-    socket: socketRef.current ?? (roomCode ? getSocket() : null),
+    socket: roomCode ? getSocket() : null,
     localStream,
     isInitiator: isCreator,
     participantCount: participants.length,
