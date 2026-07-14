@@ -277,12 +277,8 @@ export default function StudioView() {
         }
         streamRef.current = stream
         setLocalStream(stream)
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.onloadedmetadata = () => {
-            setCameraReady(true)
-          }
-        }
+        // Don't attach srcObject here — videoRef.current may be null if
+        // the video element hasn't rendered yet. The useEffect below handles it.
       } catch (err: any) {
         if (mounted) setCameraError(friendlyCameraError(err))
       }
@@ -307,9 +303,21 @@ export default function StudioView() {
     participantCount: participants.length,
   })
 
+  // Attach local stream to video element whenever stream or element becomes available
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !localStream) return
+    if (video.srcObject === localStream) return // already attached
+    video.srcObject = localStream
+    video.onloadedmetadata = () => setCameraReady(true)
+    // Some browsers need explicit play() after srcObject assignment
+    video.play().catch(() => {/* autoplay policy — user gesture required */})
+  }, [localStream, cameraReady]) // cameraReady dep re-runs if video re-mounts
+
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream
+      remoteVideoRef.current.play().catch(() => {})
     }
   }, [remoteStream])
 
@@ -648,7 +656,14 @@ export default function StudioView() {
                             muted
                             className={`w-full h-full object-cover pointer-events-none ${mirrored ? 'scale-x-[-1]' : ''}`}
                             style={{ filter: f.css || undefined }}
-                            ref={(el) => { if (el && localStream && !el.srcObject) { el.srcObject = localStream } }}
+                            ref={(el) => {
+                              if (el && localStream) {
+                                if (el.srcObject !== localStream) {
+                                  el.srcObject = localStream
+                                  el.play().catch(() => {})
+                                }
+                              }
+                            }}
                           />
                         ) : (
                           <span
