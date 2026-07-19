@@ -2,283 +2,425 @@
 
 import { useAppStore } from '@/lib/store'
 import { useSession, signOut } from 'next-auth/react'
-import { motion } from 'framer-motion'
-import { Camera, Sparkles, Heart, Users, ArrowRight, GalleryHorizontalEnd, Star, Zap } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { useState, useRef, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Camera, ArrowRight, LogIn, GalleryHorizontalEnd, User } from 'lucide-react'
+import { getSocket } from '@/lib/socket'
+import { toast } from 'sonner'
+
+const STEPS = [
+  { emoji: '✍️', label: 'Enter your name' },
+  { emoji: '🔗', label: 'Create or join' },
+  { emoji: '📸', label: 'Shoot together' },
+  { emoji: '🎞️', label: 'Download strip' },
+]
+
+// ─── Socket helpers — outside component so React Compiler never analyses them ─
+
+type RoomCallbacks = {
+  setRoomCode: (c: string) => void
+  setRoomState: (s: any) => void
+  setParticipants: (p: any[]) => void
+  setIsCreator: (b: boolean) => void
+  setIsWorking: (b: boolean) => void
+  setView: (v: any) => void
+  setUserId: (id: string) => void
+  setSessionId: (id: string | null) => void
+}
+
+function socketCreate(uname: string, cb: RoomCallbacks) {
+  const socket = getSocket()
+  const onCreated = (roomData: any) => {
+    cb.setRoomCode(roomData.code)
+    cb.setRoomState(roomData)
+    cb.setParticipants(roomData.participants || [])
+    cb.setIsCreator(true)
+    cb.setIsWorking(false)
+    sessionStorage.setItem(`snap_joined_${roomData.code}`, '1')
+    cb.setView('lobby')
+    clearTimeout(t)
+    socket.off('room-created', onCreated)
+    socket.off('error', onErr)
+    fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: uname, theme: 'classic', filter: 'none', code: roomData.code }),
+    }).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { cb.setUserId(d.user.id); cb.setSessionId(d.session.id) } })
+      .catch(() => {})
+  }
+  const onErr = (err: any) => {
+    toast.error(err.message || 'Could not connect — check your internet')
+    cb.setIsWorking(false)
+    clearTimeout(t)
+    socket.off('room-created', onCreated)
+    socket.off('error', onErr)
+  }
+  const t = setTimeout(() => onErr({ message: 'Server unreachable. Is the socket service running?' }), 10000)
+  socket.on('room-created', onCreated)
+  socket.on('error', onErr)
+  const emit = () => socket.emit('create-room', { username: uname, theme: 'classic', filter: 'none' })
+  if (socket.connected) { emit() } else { socket.once('connect', emit); socket.connect() }
+}
+
+function socketJoin(raw: string, uname: string, cb: RoomCallbacks) {
+  const socket = getSocket()
+  const onJoined = (roomData: any) => {
+    const finalCode = roomData.code || raw
+    cb.setIsCreator(false)
+    cb.setRoomCode(finalCode)
+    cb.setRoomState(roomData)
+    cb.setParticipants(roomData.participants || [])
+    cb.setIsWorking(false)
+    sessionStorage.setItem(`snap_joined_${finalCode}`, '1')
+    cb.setView('lobby')
+    clearTimeout(t)
+    socket.off('room-joined', onJoined)
+    socket.off('error', onErr)
+    fetch('/api/rooms/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: raw, username: uname }),
+    }).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { cb.setUserId(d.user.id); cb.setSessionId(d.session.id) } })
+      .catch(() => {})
+  }
+  const onErr = (err: any) => {
+    toast.error(err.message || 'Room not found — check the code and try again')
+    cb.setIsWorking(false)
+    clearTimeout(t)
+    socket.off('room-joined', onJoined)
+    socket.off('error', onErr)
+  }
+  const t = setTimeout(() => onErr({ message: 'Server unreachable' }), 10000)
+  socket.on('room-joined', onJoined)
+  socket.on('error', onErr)
+  const emit = () => socket.emit('join-room', { code: raw, username: uname })
+  if (socket.connected) { emit() } else { socket.once('connect', emit); socket.connect() }
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function LandingView() {
-  const { setView, setUsername, username, setUserId, setRoomCode, setIsCreator } = useAppStore()
+  const {
+    setView, setUsername, username, setUserId,
+    setRoomCode, setIsCreator, setRoomState,
+    setParticipants, setSessionId,
+  } = useAppStore()
   const { data: session } = useSession()
 
-  // Auto-fill username from session
-  if (session?.user?.username && !username) {
-    setUsername(session.user.username)
-    setUserId(session.user.id)
-  }
+  const [mode, setMode] = useState<'create' | 'join'>('create')
+  const [joinCode, setJoinCode] = useState('')
+  const [isWorking, setIsWorking] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const joinInputRef = useRef<HTMLInputElement>(null)
+  // Pending deep-link code — set once on mount, consumed when mode=join
+  const pendingRef = useRef<string | null>(null)
 
-  const handleGetStarted = () => {
-    if (!username.trim()) return
-    // UX-04: if arriving from a deep link, auto-join that room
-    const pendingJoin = sessionStorage.getItem('snap_pending_join')
-    if (pendingJoin) {
-      sessionStorage.removeItem('snap_pending_join')
-      setRoomCode(pendingJoin)
-      setIsCreator(false)
-      setView('join')
-      return
+  // Build a stable callbacks object via ref — never triggers re-analysis
+  const cbRef = useRef<RoomCallbacks>({
+    setRoomCode, setRoomState, setParticipants, setIsCreator,
+    setIsWorking, setView, setUserId, setSessionId,
+  })
+  // Keep inner functions current without recreating the object
+  cbRef.current.setRoomCode = setRoomCode
+  cbRef.current.setRoomState = setRoomState
+  cbRef.current.setParticipants = setParticipants
+  cbRef.current.setIsCreator = setIsCreator
+  cbRef.current.setIsWorking = setIsWorking
+  cbRef.current.setView = setView
+  cbRef.current.setUserId = setUserId
+  cbRef.current.setSessionId = setSessionId
+
+  // Auto-fill username from NextAuth session
+  useEffect(() => {
+    if (session?.user?.username && !username) {
+      setUsername(session.user.username)
+      if (session.user.id) setUserId(session.user.id)
     }
-    setView('create')
+  }, [session]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep link: read sessionStorage once on mount, don't call setState here
+  useEffect(() => {
+    const pending = sessionStorage.getItem('snap_pending_join')
+    if (pending) {
+      sessionStorage.removeItem('snap_pending_join')
+      pendingRef.current = pending
+      setMode('join') // only setState allowed: switches tab
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const canProceed = username.trim().length >= 1
+
+  function handleCreate() {
+    const uname = username.trim()
+    if (!uname) { nameRef.current?.focus(); return }
+    setIsWorking(true)
+    socketCreate(uname, cbRef.current)
   }
 
-  const handleJoinDirect = () => {
-    if (!username.trim()) return
-    setView('join')
+  function handleJoin(overrideCode?: string) {
+    const uname = username.trim()
+    const raw = (overrideCode ?? joinCode).trim().toUpperCase()
+    if (!uname) { nameRef.current?.focus(); return }
+    if (raw.length !== 6) { toast.error('Enter the full 6-character room code'); return }
+    setIsWorking(true)
+    socketJoin(raw, uname, cbRef.current)
   }
+
+  // Once mode flips to join AND there's a pending deep-link code, fill + submit
+  // This runs after render so setJoinCode here is fine (not in effect body)
+  useEffect(() => {
+    if (mode !== 'join' || !pendingRef.current) return
+    const code = pendingRef.current
+    pendingRef.current = null
+    setJoinCode(code)
+    if (username.trim()) {
+      const t = setTimeout(() => handleJoin(code), 150)
+      return () => clearTimeout(t)
+    }
+  }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="glass sticky top-0 z-50"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2">
-              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Camera className="w-5 h-5 text-primary" />
-              </div>
-              <span className="text-lg font-semibold tracking-tight">SnapTogether</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="sm" onClick={() => setView('gallery')} className="hidden sm:flex">
-                <GalleryHorizontalEnd className="w-4 h-4 mr-1.5" />
-                Gallery
-              </Button>
-              {session ? (
-                <div className="hidden sm:flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">{session.user.username}</span>
-                  {session.user.image
-                    ? <img src={session.user.image} className="w-8 h-8 rounded-full" alt="" />
-                    : <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold">{session.user.username?.[0]?.toUpperCase()}</div>
-                  }
-                  <Button variant="ghost" size="sm" onClick={() => signOut()} className="text-xs text-muted-foreground">Sign out</Button>
-                </div>
-              ) : (
-                <Button variant="ghost" size="sm" onClick={() => setView('profile')} className="hidden sm:flex">
-                  <Star className="w-4 h-4 mr-1.5" />
-                  Sign In
-                </Button>
-              )}
-            </div>
+    <div className="min-h-screen flex flex-col bg-background text-foreground overflow-x-hidden">
+      {/* Ambient blobs */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        <div className="absolute -top-32 -left-16 w-[480px] h-[480px] rounded-full bg-primary/8 blur-[140px]" />
+        <div className="absolute -bottom-24 -right-16 w-[380px] h-[380px] rounded-full bg-violet-500/6 blur-[120px]" />
+        <div className="absolute top-1/2 left-1/3 w-[280px] h-[280px] rounded-full bg-rose-500/4 blur-[100px]" />
+      </div>
+
+      {/* Nav */}
+      <nav className="relative z-10 flex items-center justify-between px-5 h-14 border-b border-white/[0.06]">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center">
+            <Camera className="w-3.5 h-3.5 text-primary" />
           </div>
+          <span className="text-sm font-semibold">SnapTogether</span>
         </div>
-      </motion.header>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setView('gallery')}
+            className="p-2 rounded-lg text-white/35 hover:text-white/70 hover:bg-white/6 transition-all text-xs flex items-center gap-1.5"
+          >
+            <GalleryHorizontalEnd className="w-4 h-4" />
+            <span className="hidden sm:inline">Gallery</span>
+          </button>
+          <button
+            onClick={() => session ? signOut() : setView('profile')}
+            className="p-2 rounded-lg text-white/35 hover:text-white/70 hover:bg-white/6 transition-all text-xs flex items-center gap-1.5"
+          >
+            {session?.user?.image
+              ? <img src={session.user.image} className="w-5 h-5 rounded-full" alt="" />
+              : session ? <User className="w-4 h-4" /> : <LogIn className="w-4 h-4" />
+            }
+            <span className="hidden sm:inline">{session ? session.user.username : 'Sign in'}</span>
+          </button>
+        </div>
+      </nav>
 
-      {/* Hero */}
-      <main className="flex-1 flex flex-col">
-        <section className="hero-gradient flex-1 flex items-center justify-center px-4 py-12 md:py-20">
-          <div className="max-w-4xl mx-auto text-center">
-            {/* Name Input */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="mb-8"
-            >
-              <div className="glass rounded-2xl p-3 max-w-sm mx-auto">
-                <input
-                  type="text"
-                  placeholder="Enter your name to start..."
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleGetStarted() }}
-                  className="w-full bg-transparent text-center text-base outline-none placeholder:text-muted-foreground/60 px-4 py-2"
-                  maxLength={20}
-                />
+      {/* Main */}
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-5 py-8">
+        <div className="w-full max-w-[360px]">
+          {/* Logo */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            className="flex justify-center mb-6"
+          >
+            <div className="relative flex items-center justify-center">
+              <div className="absolute w-20 h-20 rounded-[24px] bg-primary/10 animate-pulse-ring" />
+              <div className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-primary/25 to-violet-500/15 border border-white/10 flex items-center justify-center shadow-xl shadow-primary/10">
+                <Camera className="w-7 h-7 text-primary" />
               </div>
-            </motion.div>
+            </div>
+          </motion.div>
 
-            {/* Badge */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              className="mb-6"
-            >
-              <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass text-sm text-muted-foreground">
-                <Zap className="w-3.5 h-3.5 text-primary" />
-                Premium Digital Photobooth Experience
-              </span>
-            </motion.div>
+          {/* Headline */}
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.08 }}
+            className="text-center mb-7"
+          >
+            <h1 className="text-[2rem] font-bold leading-[1.12] tracking-tight mb-2">
+              Capture moments<br />
+              <span className="gradient-text">together, anywhere</span>
+            </h1>
+            <p className="text-sm text-white/35">Real-time photo booth for two</p>
+          </motion.div>
 
-            {/* Headline */}
-            <motion.h1
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.3 }}
-              className="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tight mb-6 leading-[1.1]"
-            >
-              Capture moments
-              <br />
-              <span className="gradient-text">together, anywhere.</span>
-            </motion.h1>
+          {/* Card */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.14 }}
+            className="glass-strong rounded-3xl p-5 mb-4 shadow-2xl shadow-black/50"
+          >
+            {/* Name */}
+            <div className="mb-4">
+              <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-white/30 mb-1.5">
+                Your name
+              </label>
+              <input
+                ref={nameRef}
+                type="text"
+                placeholder="e.g. Alex"
+                value={username}
+                onChange={e => setUsername(e.target.value.slice(0, 20))}
+                onKeyDown={e => { if (e.key === 'Enter') mode === 'create' ? handleCreate() : handleJoin() }}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                maxLength={20}
+                autoComplete="nickname"
+                className={`w-full rounded-xl px-4 py-3 text-base font-semibold bg-white/6 border outline-none transition-all placeholder:text-white/20 ${
+                  focused
+                    ? 'border-primary/50 bg-white/8 shadow-[0_0_0_3px_oklch(0.65_0.22_350/0.12)]'
+                    : 'border-white/8 hover:border-white/15'
+                }`}
+              />
+            </div>
 
-            {/* Subtitle */}
-            <motion.p
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.5 }}
-              className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed"
-            >
-              Create a private photobooth room, invite your loved ones,
-              and capture beautiful synchronized photo strips with creative filters.
-              Your memories, forever preserved.
-            </motion.p>
-
-            {/* CTAs */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.7 }}
-              className="flex flex-col sm:flex-row items-center justify-center gap-4"
-            >
-              <Button
-                size="lg"
-                onClick={handleGetStarted}
-                disabled={!username.trim()}
-                className="rounded-2xl px-8 py-6 text-base font-medium shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300 h-auto"
-              >
-                <Camera className="w-5 h-5 mr-2" />
-                Create a Room
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                onClick={handleJoinDirect}
-                disabled={!username.trim()}
-                className="rounded-2xl px-8 py-6 text-base font-medium h-auto"
-              >
-                Join a Room
-              </Button>
-            </motion.div>
-
-            {/* Floating decorative elements */}
-            <motion.div
-              animate={{ y: [0, -8, 0] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute top-32 left-8 sm:left-16 text-3xl opacity-30 pointer-events-none select-none"
-            >
-              📸
-            </motion.div>
-            <motion.div
-              animate={{ y: [0, 6, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-              className="absolute top-48 right-8 sm:right-20 text-2xl opacity-25 pointer-events-none select-none"
-            >
-              ✨
-            </motion.div>
-            <motion.div
-              animate={{ y: [0, -10, 0] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
-              className="absolute bottom-40 left-12 sm:left-24 text-3xl opacity-20 pointer-events-none select-none"
-            >
-              💕
-            </motion.div>
-          </div>
-        </section>
-
-        {/* Features */}
-        <section className="py-20 px-4">
-          <div className="max-w-6xl mx-auto">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              className="text-center mb-14"
-            >
-              <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-                More than a <span className="gradient-text">photobooth</span>
-              </h2>
-              <p className="text-muted-foreground text-lg max-w-xl mx-auto">
-                A digital memory archive that brings people together through beautiful, shared moments.
-              </p>
-            </motion.div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[
-                { icon: Camera, title: 'Private Rooms', desc: 'Create a room, share a code, and start capturing together in seconds.' },
-                { icon: Sparkles, title: 'Creative Filters', desc: 'From vintage film to cyber neon — 12+ unique filters with real-time preview.' },
-                { icon: Heart, title: 'Photo Strips', desc: 'Generate beautiful photo strips in classic, magazine, and memory layouts.' },
-                { icon: Users, title: 'Group Sessions', desc: 'Support for 2 to 6 people. Everyone captures together, synchronized.' },
-                { icon: Zap, title: 'AI Enhancement', desc: 'Auto lighting, smart crop, and AI-generated captions for your memories.' },
-                { icon: GalleryHorizontalEnd, title: 'Memory Gallery', desc: 'A timeline of your shared moments. Search, favorite, and download anytime.' },
-              ].map((feature, i) => (
-                <motion.div
-                  key={feature.title}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: i * 0.1 }}
-                  className="glass rounded-2xl p-6 hover:shadow-lg transition-shadow duration-300 group"
+            {/* Tab toggle */}
+            <div className="flex bg-white/[0.05] rounded-2xl p-1 mb-4 gap-1">
+              {(['create', 'join'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => {
+                    setMode(m)
+                    if (m === 'join') setTimeout(() => joinInputRef.current?.focus(), 50)
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all relative overflow-hidden ${
+                    mode === m ? 'text-white' : 'text-white/35 hover:text-white/55'
+                  }`}
                 >
-                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/15 transition-colors">
-                    <feature.icon className="w-6 h-6 text-primary" />
-                  </div>
-                  <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
-                  <p className="text-muted-foreground text-sm leading-relaxed">{feature.desc}</p>
-                </motion.div>
+                  {mode === m && (
+                    <motion.div
+                      layoutId="tab-bg"
+                      className="absolute inset-0 bg-white/10 rounded-xl"
+                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                    />
+                  )}
+                  <span className="relative z-10">
+                    {m === 'create' ? '✦ New room' : '→ Join room'}
+                  </span>
+                </button>
               ))}
             </div>
-          </div>
-        </section>
 
-        {/* CTA Bottom */}
-        <section className="py-16 px-4">
-          <div className="max-w-3xl mx-auto text-center">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              className="glass rounded-3xl p-10 sm:p-14"
-            >
-              <h2 className="text-2xl sm:text-3xl font-bold mb-4">
-                Ready to create memories?
-              </h2>
-              <p className="text-muted-foreground mb-8">
-                Distance doesn&apos;t have to mean disconnection. Start your first photobooth session now.
-              </p>
-              <Button
-                size="lg"
-                onClick={handleGetStarted}
-                disabled={!username.trim()}
-                className="rounded-2xl px-8 py-6 text-base font-medium"
-              >
-                Get Started Free
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-            </motion.div>
-          </div>
-        </section>
-      </main>
+            <AnimatePresence mode="wait" initial={false}>
+              {mode === 'create' ? (
+                <motion.div
+                  key="create"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  <button
+                    onClick={handleCreate}
+                    disabled={isWorking || !canProceed}
+                    className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-primary/25 hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-50"
+                  >
+                    {isWorking ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Camera className="w-4 h-4" />
+                        Create a room
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                  <p className="text-center text-[11px] text-white/20 mt-2">
+                    You'll get a 6-letter code to share
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="join"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.15 }}
+                  className="space-y-3"
+                >
+                  <div>
+                    <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-white/30 mb-1.5">
+                      Room code
+                    </label>
+                    <div className="relative h-14">
+                      {/* Visual letter boxes */}
+                      <div className="absolute inset-0 flex gap-1.5 pointer-events-none" aria-hidden>
+                        {Array.from({ length: 6 }).map((_, i) => (
+                          <div
+                            key={i}
+                            className={`flex-1 h-full rounded-xl border flex items-center justify-center text-lg font-bold font-mono transition-all duration-150 ${
+                              i < joinCode.length
+                                ? 'bg-primary/15 border-primary/50 text-white'
+                                : i === joinCode.length
+                                ? 'bg-white/8 border-primary/30 text-white/20'
+                                : 'bg-white/4 border-white/8 text-white/15'
+                            }`}
+                          >
+                            {joinCode[i] ?? '·'}
+                          </div>
+                        ))}
+                      </div>
+                      {/* Real input overlaying boxes */}
+                      <input
+                        ref={joinInputRef}
+                        type="text"
+                        inputMode="text"
+                        value={joinCode}
+                        onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
+                        onKeyDown={e => { if (e.key === 'Enter') handleJoin() }}
+                        maxLength={6}
+                        autoComplete="off"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-text caret-transparent"
+                        aria-label="Room code"
+                      />
+                    </div>
+                  </div>
 
-      {/* Footer */}
-      <footer className="border-t py-6 px-4">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Camera className="w-4 h-4" />
-            <span>SnapTogether</span>
-            <span>·</span>
-            <span>Capture moments together</span>
-          </div>
-          <p className="text-xs text-muted-foreground/60">
-            A premium digital memory experience
-          </p>
+                  <button
+                    onClick={() => handleJoin()}
+                    disabled={isWorking || joinCode.length !== 6 || !canProceed}
+                    className="w-full py-3.5 rounded-xl bg-primary text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-primary/25 hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-35"
+                  >
+                    {isWorking ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>Join room <ArrowRight className="w-4 h-4" /></>
+                    )}
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+
+          {/* Steps */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3 }}
+            className="grid grid-cols-4 gap-2"
+          >
+            {STEPS.map((s, i) => (
+              <div key={i} className="flex flex-col items-center gap-1.5 text-center">
+                <div className="w-9 h-9 rounded-xl bg-white/[0.05] border border-white/[0.07] flex items-center justify-center text-base">
+                  {s.emoji}
+                </div>
+                <span className="text-[9px] leading-tight text-white/25">{s.label}</span>
+              </div>
+            ))}
+          </motion.div>
         </div>
-      </footer>
+      </main>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState, useCallback, memo } from 'react'
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -16,6 +16,84 @@ import type { FilterId, CapturedPhoto } from '@/lib/types'
 import { FILTERS, getFilterCss } from '@/lib/types'
 
 const REACTION_EMOJIS = ['❤️', '😂', '😍', '🥰', '🎉', '✨', '🔥', '👏', '💕', '🤩']
+
+// ── FilterStrip: one canvas snapshot, CSS filter per thumb ────────────────────
+// This avoids spawning 13 video decoders on mobile which causes frame drops.
+function FilterStrip({
+  filters, selectedFilter, localStream, cameraReady, mirrored, onSelect,
+}: {
+  filters: typeof FILTERS
+  selectedFilter: string
+  localStream: MediaStream | null
+  cameraReady: boolean
+  mirrored: boolean
+  onSelect: (id: string) => void
+}) {
+  const snapRef = useRef<string | null>(null)
+  const [snap, setSnap] = useState<string | null>(null)
+
+  // Take a single snapshot frame whenever camera becomes ready or stream changes
+  useEffect(() => {
+    if (!cameraReady || !localStream) return
+    const video = document.createElement('video')
+    video.srcObject = localStream
+    video.muted = true
+    video.playsInline = true
+    video.play().catch(() => {})
+    const timer = setTimeout(() => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 112; canvas.height = 112
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      if (mirrored) { ctx.translate(112, 0); ctx.scale(-1, 1) }
+      ctx.drawImage(video, 0, 0, 112, 112)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
+      snapRef.current = dataUrl
+      setSnap(dataUrl)
+      video.srcObject = null
+    }, 300)
+    return () => { clearTimeout(timer); video.srcObject = null }
+  }, [cameraReady, localStream, mirrored])
+
+  return (
+    <div className="relative mt-3 z-20 px-1 sm:px-3">
+      <div className="flex gap-2.5 overflow-x-auto no-scrollbar justify-start sm:justify-center items-end py-2">
+        {filters.map((f) => {
+          const active = selectedFilter === f.id
+          return (
+            <button
+              key={f.id}
+              onClick={() => onSelect(f.id)}
+              className="shrink-0 flex flex-col items-center gap-1.5"
+            >
+              <span className={`relative block w-14 h-14 rounded-xl overflow-hidden transition-all duration-200 ${
+                active ? 'ring-2 ring-white scale-110 shadow-xl' : 'ring-1 ring-white/20 opacity-65 hover:opacity-95 hover:scale-105'
+              }`}>
+                {snap ? (
+                  <img
+                    src={snap}
+                    alt={f.name}
+                    className="w-full h-full object-cover pointer-events-none"
+                    style={{ filter: f.css || undefined }}
+                  />
+                ) : (
+                  <span
+                    className="block w-full h-full bg-gradient-to-br from-neutral-600 to-neutral-800"
+                    style={{ filter: f.css || undefined }}
+                  />
+                )}
+                {active && <span className="absolute inset-0 ring-2 ring-inset ring-white/40 rounded-xl pointer-events-none" />}
+              </span>
+              <span className={`text-[9px] font-medium drop-shadow whitespace-nowrap ${active ? 'text-white' : 'text-white/55'}`}>
+                {f.name}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 type StudioPhase = 'setup' | 'countdown' | 'capture' | 'review'
 
@@ -101,7 +179,9 @@ export default function StudioView() {
       syncClock()
     } else {
       socket.once('connect', joinOrCreate)
-      socket.on('connect', () => { setSocketStatus('connected'); syncClock() })
+      // Use once so each reconnect only adds one listener, not accumulating
+      socket.on('connect', () => { setSocketStatus('connected') })
+      socket.on('connect', syncClock)
       socket.on('connect_error', () => setSocketStatus('error'))
       socket.on('disconnect', () => setSocketStatus('connecting'))
       socket.connect()
@@ -412,17 +492,19 @@ export default function StudioView() {
   const capturePhotoRef = useRef(capturePhoto)
   useEffect(() => { capturePhotoRef.current = capturePhoto }, [capturePhoto])
 
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startCountdownSequence = useCallback((secs = 5) => {
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current)
     setPhase('countdown')
     let count = secs
     setCountdown(count)
-
-    const interval = setInterval(() => {
+    countdownIntervalRef.current = setInterval(() => {
       count--
       if (count > 0) {
         setCountdown(count)
       } else {
-        clearInterval(interval)
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current)
+        countdownIntervalRef.current = null
         setCountdown(null)
         setPhase('capture')
       }
@@ -646,61 +728,16 @@ export default function StudioView() {
             </div>
           )}
 
-          {/* Filter row — thumbnail + name, always below frame */}
+          {/* Filter row — canvas snapshots (not live video per filter = no decoder per filter) */}
           {phase === 'setup' && !cameraError && (
-            <div className="relative mt-3 z-20 px-1 sm:px-3">
-              <div className="flex gap-3 overflow-x-auto no-scrollbar justify-start sm:justify-center items-end py-2">
-                {FILTERS.map((f) => {
-                  const active = selectedFilter === f.id
-                  return (
-                    <button
-                      key={f.id}
-                      onClick={() => { setSelectedFilter(f.id as FilterId); socketRef.current?.emit('update-filter', { filter: f.id }) }}
-                      className="shrink-0 flex flex-col items-center gap-1.5"
-                    >
-                      {/* Thumbnail — live video frame with filter baked via CSS */}
-                      <span className={`relative block w-14 h-14 rounded-xl overflow-hidden transition-all duration-200 ${
-                        active
-                          ? 'ring-2 ring-white scale-110 shadow-xl'
-                          : 'ring-1 ring-white/20 opacity-70 hover:opacity-100 hover:scale-105'
-                      }`}>
-                        {cameraReady ? (
-                          <video
-                            autoPlay
-                            playsInline
-                            muted
-                            className={`w-full h-full object-cover pointer-events-none ${mirrored ? 'scale-x-[-1]' : ''}`}
-                            style={{ filter: f.css || undefined }}
-                            ref={(el) => {
-                              if (el && localStream) {
-                                if (el.srcObject !== localStream) {
-                                  el.srcObject = localStream
-                                  el.play().catch(() => {})
-                                }
-                              }
-                            }}
-                          />
-                        ) : (
-                          <span
-                            className="block w-full h-full bg-gradient-to-br from-neutral-600 to-neutral-800"
-                            style={{ filter: f.css || undefined }}
-                          />
-                        )}
-                        {active && (
-                          <span className="absolute inset-0 ring-2 ring-inset ring-white/40 rounded-xl pointer-events-none" />
-                        )}
-                      </span>
-                      {/* Name — always visible */}
-                      <span className={`text-[9px] font-medium drop-shadow whitespace-nowrap ${
-                        active ? 'text-white' : 'text-white/60'
-                      }`}>
-                        {f.name}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+            <FilterStrip
+              filters={FILTERS}
+              selectedFilter={selectedFilter}
+              localStream={localStream}
+              cameraReady={cameraReady}
+              mirrored={mirrored}
+              onSelect={(id) => { setSelectedFilter(id as FilterId); socketRef.current?.emit('update-filter', { filter: id }) }}
+            />
           )}
 
           {/* Ready status */}

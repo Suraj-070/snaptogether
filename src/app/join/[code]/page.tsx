@@ -1,42 +1,62 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { lazy, Suspense } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useAppStore } from '@/lib/store'
 
-// UX-04: Deep link handler — /join/ABC123
-// When someone opens this URL, pre-fill the room code and
-// navigate straight to the join flow. If no username is set,
-// go to landing first (it will return here after name entry).
-export default function JoinPage() {
-  const { code } = useParams<{ code: string }>()
-  const { username, setRoomCode, setIsCreator, setView } = useAppStore()
-  const router = useRouter()
+// Eagerly load the critical path screens
+import LandingView from '@/components/photobooth/landing'
+import LobbyView from '@/components/photobooth/lobby'
 
-  useEffect(() => {
-    if (!code) return
-    const roomCode = code.toUpperCase()
-    setRoomCode(roomCode)
-    setIsCreator(false)
+// Lazy-load the heavier screens to keep initial bundle small
+const CreateRoomView  = lazy(() => import('@/components/photobooth/create-room'))
+const JoinRoomView    = lazy(() => import('@/components/photobooth/join-room'))
+const StudioView      = lazy(() => import('@/components/photobooth/studio'))
+const StripBuilderView = lazy(() => import('@/components/photobooth/strip-builder'))
+const ResultView      = lazy(() => import('@/components/photobooth/result-view'))
+const GalleryView     = lazy(() => import('@/components/photobooth/gallery'))
+const ProfileView     = lazy(() => import('@/components/photobooth/profile'))
 
-    if (username.trim()) {
-      // Already have a name — go straight to join view
-      setView('join')
-      router.replace('/')
-    } else {
-      // No name yet — go to landing, join view will auto-trigger after name entry
-      // Store intended join code in sessionStorage so landing can pick it up
-      sessionStorage.setItem('snap_pending_join', roomCode)
-      router.replace('/')
-    }
-  }, [code])
-
+function PageSkeleton() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-black text-white">
-      <div className="text-center">
-        <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-3" />
-        <p className="text-sm text-white/50">Joining room {code?.toUpperCase()}...</p>
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
       </div>
     </div>
+  )
+}
+
+// Direction-aware transitions: forward = slide left, back = slide right
+const FORWARD_VIEWS = ['create', 'join', 'lobby', 'studio', 'stripBuilder', 'result']
+const viewDepth: Record<string, number> = {
+  landing: 0, create: 1, join: 1, lobby: 2, studio: 3, stripBuilder: 4, result: 5, gallery: 1, profile: 1,
+}
+
+export default function Home() {
+  const view = useAppStore(s => s.view)
+
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={view}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -6 }}
+        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <Suspense fallback={<PageSkeleton />}>
+          {view === 'landing'      && <LandingView />}
+          {view === 'create'       && <CreateRoomView />}
+          {view === 'join'         && <JoinRoomView />}
+          {view === 'lobby'        && <LobbyView />}
+          {view === 'studio'       && <StudioView />}
+          {view === 'stripBuilder' && <StripBuilderView />}
+          {view === 'result'       && <ResultView />}
+          {view === 'gallery'      && <GalleryView />}
+          {view === 'profile'      && <ProfileView />}
+        </Suspense>
+      </motion.div>
+    </AnimatePresence>
   )
 }

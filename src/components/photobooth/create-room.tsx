@@ -2,294 +2,255 @@
 
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { motion } from 'framer-motion'
-import { Camera, ArrowLeft, Sparkles } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Camera, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSocket } from '@/lib/socket'
 import type { FilterId, StripLayout } from '@/lib/types'
 import { FILTERS } from '@/lib/types'
 
-const THEMES = [
-  { id: 'classic', name: 'Classic', icon: '📷', desc: 'Traditional photobooth style', frame: 'bg-neutral-900', accent: 'from-rose-300 to-amber-200' },
-  { id: 'modern', name: 'Modern', icon: '✨', desc: 'Clean magazine look', frame: 'bg-white border border-neutral-200', accent: 'from-sky-300 to-indigo-200' },
-  { id: 'couple', name: 'Couple', icon: '💕', desc: 'Two-person matching layout', frame: 'bg-rose-50 border border-rose-200', accent: 'from-pink-300 to-rose-200' },
-  { id: 'memory', name: 'Memory', icon: '📝', desc: 'With date, message & stickers', frame: 'bg-amber-50 border border-amber-200', accent: 'from-amber-300 to-orange-200' },
-] as const
-
-const LAYOUTS = [
-  { id: 'classic' as StripLayout, name: 'Classic 4-Strip' },
-  { id: 'magazine' as StripLayout, name: 'Magazine' },
-  { id: 'couple' as StripLayout, name: 'Couple Split' },
-  { id: 'memory' as StripLayout, name: 'Memory Card' },
+const VIBES: { id: string; emoji: string; name: string; desc: string; filter: FilterId; layout: StripLayout }[] = [
+  { id: 'classic',  emoji: '🎞️', name: 'Classic',      desc: 'Timeless film strip feel',       filter: 'vintage',      layout: 'classic'  },
+  { id: 'couple',   emoji: '💕', name: 'Couple',       desc: 'Soft & romantic side-by-side',   filter: 'polaroid',     layout: 'couple'   },
+  { id: 'aesthetic',emoji: '🌸', name: 'Aesthetic',    desc: 'Dreamy pastel mood',             filter: 'dream',        layout: 'magazine' },
+  { id: 'cinema',   emoji: '🎬', name: 'Cinematic',    desc: 'Warm movie-scene tones',         filter: 'warm-cinema',  layout: 'magazine' },
+  { id: 'retro',    emoji: '📼', name: 'Retro',        desc: 'Y2K camcorder energy',           filter: 'retro',        layout: 'memory'   },
+  { id: 'neon',     emoji: '💜', name: 'Neon',         desc: 'Cyber glow & vivid colours',     filter: 'cyber-neon',   layout: 'classic'  },
+  { id: 'bw',       emoji: '🖤', name: 'B&W',          desc: 'Clean black & white',            filter: 'bw',           layout: 'classic'  },
+  { id: 'raw',      emoji: '✨', name: 'Natural',      desc: 'No filter, just you',            filter: 'none',         layout: 'classic'  },
 ]
 
-/** Mini photo-strip mockup for theme previews */
-function ThemeStripPreview({ frame, accent }: { frame: string; accent: string }) {
-  return (
-    <div className={`w-10 rounded-md p-1 flex flex-col gap-1 shadow-sm ${frame}`}>
-      {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          className={`h-5 rounded-[3px] bg-gradient-to-br ${accent}`}
-          style={{ opacity: 0.9 - i * 0.12 }}
-        />
-      ))}
-      <div className="h-1.5" />
-    </div>
-  )
-}
-
-/** Colorful sample the CSS filter gets applied to */
-function FilterSwatch({ css }: { css: string }) {
-  return (
-    <div
-      className="w-14 h-14 rounded-lg overflow-hidden shrink-0"
-      style={{ filter: css || undefined }}
-    >
-      <div className="w-full h-full bg-gradient-to-br from-sky-400 via-rose-400 to-amber-300 relative">
-        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-emerald-500/70 to-transparent" />
-        <div className="absolute top-1.5 right-2 w-3 h-3 rounded-full bg-yellow-200" />
-      </div>
-    </div>
-  )
-}
-
-/** Mini layout mockups */
-function LayoutPreview({ id }: { id: StripLayout }) {
-  const cell = 'rounded-[2px] bg-primary/25'
-  if (id === 'classic') return (
-    <div className="w-8 mx-auto flex flex-col gap-0.5 p-1 rounded bg-muted">
-      {[0, 1, 2, 3].map(i => <div key={i} className={`h-3 ${cell}`} />)}
-    </div>
-  )
-  if (id === 'magazine') return (
-    <div className="w-14 mx-auto grid grid-cols-2 gap-0.5 p-1 rounded bg-muted">
-      <div className={`h-7 row-span-2 ${cell}`} />
-      <div className={`h-3.5 ${cell}`} />
-      <div className={`h-3 ${cell}`} />
-      <div className={`h-3 col-span-2 ${cell}`} />
-    </div>
-  )
-  if (id === 'couple') return (
-    <div className="w-14 mx-auto grid grid-cols-2 gap-0.5 p-1 rounded bg-muted">
-      {[0, 1, 2, 3].map(i => <div key={i} className={`h-4 ${cell}`} />)}
-    </div>
-  )
-  return (
-    <div className="w-12 mx-auto flex flex-col gap-0.5 p-1 rounded bg-muted">
-      <div className={`h-6 ${cell}`} />
-      <div className="h-1.5 rounded-[2px] bg-primary/15" />
-      <div className="h-1 w-2/3 rounded-[2px] bg-primary/15" />
-    </div>
-  )
-}
+const SHOT_COUNTS = [2, 3, 4, 6]
 
 export default function CreateRoomView() {
   const {
     username, setUserId,
     setView, setRoomCode, setIsCreator, setSessionId,
-    selectedFilter, setSelectedFilter,
-    stripLayout, setStripLayout,
+    setSelectedFilter, setStripLayout,
     setRoomState, setParticipants,
   } = useAppStore()
 
+  const [step, setStep] = useState<1 | 2>(1)
+  const [selectedVibe, setSelectedVibe] = useState(VIBES[0])
+  const [shotCount, setShotCount] = useState(4)
   const [isCreating, setIsCreating] = useState(false)
-  const [selectedTheme, setSelectedTheme] = useState('classic')
 
-  // Socket-first: the live socket server is the source of truth, so the room
-  // opens instantly. The Supabase record is written in the background and
-  // never blocks the UI.
   const handleCreate = () => {
     if (!username.trim()) return
     setIsCreating(true)
 
+    // Apply the vibe's filter & layout to store
+    setSelectedFilter(selectedVibe.filter)
+    setStripLayout(selectedVibe.layout)
+
     const socket = getSocket()
 
-    const onRoomCreated = (roomData: any) => {
+    const onCreated = (roomData: any) => {
       setRoomCode(roomData.code)
       setRoomState(roomData)
       setParticipants(roomData.participants || [])
       setIsCreator(true)
       setIsCreating(false)
-      // Set sentinel so studio.tsx doesn't re-emit create-room and create a second room
       sessionStorage.setItem(`snap_joined_${roomData.code}`, '1')
       setView('lobby')
       clearTimeout(deadline)
-      socket.off('room-created', onRoomCreated)
-      socket.off('error', onSocketError)
+      socket.off('room-created', onCreated)
+      socket.off('error', onErr)
 
-      // Persist to DB in the background.
       fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: username.trim(),
-          theme: selectedTheme,
-          filter: selectedFilter,
+          theme: selectedVibe.id,
+          filter: selectedVibe.filter,
           code: roomData.code,
         }),
       })
-        .then(r => (r.ok ? r.json() : null))
-        .then(data => {
-          if (data) {
-            setUserId(data.user.id)
-            setSessionId(data.session.id)
-          }
-        })
-        .catch(() => { /* live room still works; can retry saving later */ })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { setUserId(d.user.id); setSessionId(d.session.id) } })
+        .catch(() => {})
     }
 
-    const onSocketError = (err: any) => {
-      toast.error(err.message || 'Connection error')
+    const onErr = (err: any) => {
+      toast.error(err.message || 'Could not connect')
       setIsCreating(false)
       clearTimeout(deadline)
-      socket.off('room-created', onRoomCreated)
-      socket.off('error', onSocketError)
+      socket.off('room-created', onCreated)
+      socket.off('error', onErr)
     }
 
-    // Fail fast if the socket server is unreachable (e.g. env var missing
-    // on the deployed site) instead of spinning forever.
-    const deadline = setTimeout(() => {
-      onSocketError({ message: 'Could not reach the live server. Check your connection and try again.' })
-    }, 10000)
+    const deadline = setTimeout(() => onErr({ message: 'Server unreachable — try again' }), 10000)
+    socket.on('room-created', onCreated)
+    socket.on('error', onErr)
 
-    socket.on('room-created', onRoomCreated)
-    socket.on('error', onSocketError)
-
-    const emitCreateRoom = () => {
-      socket.emit('create-room', {
-        username: username.trim(),
-        theme: selectedTheme,
-        filter: selectedFilter,
-      })
-    }
-
-    if (socket.connected) {
-      emitCreateRoom()
-    } else {
-      socket.once('connect', emitCreateRoom)
-      socket.connect()
-    }
+    const emit = () => socket.emit('create-room', {
+      username: username.trim(),
+      theme: selectedVibe.id,
+      filter: selectedVibe.filter,
+      totalPhotos: shotCount,
+    })
+    socket.connected ? emit() : (socket.once('connect', emit), socket.connect())
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen bg-[#09090f] text-white flex flex-col">
+      {/* Ambient */}
+      <div className="fixed inset-0 pointer-events-none" aria-hidden>
+        <div className="absolute top-[-15%] right-[-5%] w-[450px] h-[450px] rounded-full bg-primary/8 blur-[120px]" />
+        <div className="absolute bottom-[-10%] left-[-5%] w-[350px] h-[350px] rounded-full bg-violet-600/6 blur-[100px]" />
+      </div>
+
       {/* Header */}
-      <header className="glass sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center">
-          <Button variant="ghost" size="sm" onClick={() => setView('landing')} className="mr-3">
-            <ArrowLeft className="w-4 h-4 mr-1.5" />
-            Back
-          </Button>
-          <span className="font-semibold">Create Room</span>
+      <header className="relative z-10 flex items-center px-5 h-14 border-b border-white/6">
+        <button
+          onClick={() => step === 2 ? setStep(1) : setView('landing')}
+          className="flex items-center gap-1.5 text-white/40 hover:text-white/70 text-sm transition-colors mr-auto"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          {step === 2 ? 'Back' : 'Home'}
+        </button>
+        {/* Progress dots */}
+        <div className="flex items-center gap-1.5 absolute left-1/2 -translate-x-1/2">
+          {[1, 2].map(s => (
+            <div
+              key={s}
+              className={`rounded-full transition-all duration-300 ${
+                s === step ? 'w-5 h-1.5 bg-primary' : s < step ? 'w-1.5 h-1.5 bg-primary/50' : 'w-1.5 h-1.5 bg-white/15'
+              }`}
+            />
+          ))}
         </div>
       </header>
 
-      <main className="flex-1 p-4 max-w-4xl mx-auto w-full">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-8"
-        >
-          {/* Theme Selection */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Camera className="w-5 h-5 text-primary" />
-              Choose Theme
-            </h3>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {THEMES.map((theme) => (
+      <main className="flex-1 flex flex-col items-center justify-center px-5 py-6 relative z-10">
+        <div className="w-full max-w-sm">
+          <AnimatePresence mode="wait">
+            {/* ── Step 1: Pick a vibe ────────────────────────────────────── */}
+            {step === 1 && (
+              <motion.div
+                key="step1"
+                initial={{ opacity: 0, x: 30 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -30 }}
+                transition={{ duration: 0.25 }}
+              >
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold mb-1">Pick a vibe</h2>
+                  <p className="text-sm text-white/35">Sets the filter and layout for your strip</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                  {VIBES.map(v => (
+                    <button
+                      key={v.id}
+                      onClick={() => setSelectedVibe(v)}
+                      className={`relative p-4 rounded-2xl border text-left transition-all ${
+                        selectedVibe.id === v.id
+                          ? 'bg-primary/12 border-primary/40 shadow-lg shadow-primary/10'
+                          : 'bg-white/4 border-white/8 hover:bg-white/7 hover:border-white/15'
+                      }`}
+                    >
+                      {selectedVibe.id === v.id && (
+                        <motion.div
+                          layoutId="vibe-check"
+                          className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full bg-primary flex items-center justify-center"
+                        >
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </motion.div>
+                      )}
+                      <span className="text-2xl block mb-1.5">{v.emoji}</span>
+                      <span className="text-sm font-semibold block">{v.name}</span>
+                      <span className="text-[11px] text-white/35 leading-tight block mt-0.5">{v.desc}</span>
+                    </button>
+                  ))}
+                </div>
+
                 <button
-                  key={theme.id}
-                  onClick={() => setSelectedTheme(theme.id)}
-                  className={`glass rounded-2xl p-4 text-left transition-all duration-200 ${
-                    selectedTheme === theme.id
-                      ? 'ring-2 ring-primary shadow-lg shadow-primary/10'
-                      : 'hover:shadow-md'
-                  }`}
+                  onClick={() => setStep(2)}
+                  className="w-full py-3.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-primary/25 transition-all"
                 >
-                  <div className="flex items-start gap-3 mb-2">
-                    <ThemeStripPreview frame={theme.frame} accent={theme.accent} />
-                    <span className="text-xl">{theme.icon}</span>
+                  Next
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Step 2: Shots + confirm ───────────────────────────────── */}
+            {step === 2 && (
+              <motion.div
+                key="step2"
+                initial={{ opacity: 0, x: 30 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -30 }}
+                transition={{ duration: 0.25 }}
+              >
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold mb-1">How many shots?</h2>
+                  <p className="text-sm text-white/35">Each shot = one synchronized capture</p>
+                </div>
+
+                {/* Shot count picker */}
+                <div className="grid grid-cols-4 gap-2 mb-6">
+                  {SHOT_COUNTS.map(n => (
+                    <button
+                      key={n}
+                      onClick={() => setShotCount(n)}
+                      className={`py-4 rounded-2xl border text-center transition-all ${
+                        shotCount === n
+                          ? 'bg-primary/12 border-primary/40 text-white'
+                          : 'bg-white/4 border-white/8 text-white/50 hover:text-white/80 hover:bg-white/7'
+                      }`}
+                    >
+                      <span className="text-2xl font-bold block">{n}</span>
+                      <span className="text-[10px] text-white/30 mt-0.5 block">
+                        {n === 2 ? 'quick' : n === 6 ? 'full' : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Summary card */}
+                <div className="bg-white/4 border border-white/8 rounded-2xl p-4 mb-5">
+                  <p className="text-[11px] font-semibold tracking-widest uppercase text-white/30 mb-3">Your session</p>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/50">Vibe</span>
+                      <span className="text-sm font-semibold">{selectedVibe.emoji} {selectedVibe.name}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/50">Filter</span>
+                      <span className="text-sm font-semibold">{FILTERS.find(f => f.id === selectedVibe.filter)?.name ?? 'None'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/50">Shots</span>
+                      <span className="text-sm font-semibold">{shotCount} photos</span>
+                    </div>
                   </div>
-                  <span className="text-sm font-medium block">{theme.name}</span>
-                  <span className="text-xs text-muted-foreground">{theme.desc}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+                </div>
 
-          {/* Filter Selection */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-primary" />
-              Default Filter
-            </h3>
-            <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-              {FILTERS.map((filter) => (
                 <button
-                  key={filter.id}
-                  onClick={() => setSelectedFilter(filter.id as FilterId)}
-                  className={`shrink-0 p-2 rounded-xl transition-all duration-200 flex flex-col items-center gap-1.5 ${
-                    selectedFilter === filter.id
-                      ? 'ring-2 ring-primary bg-primary/5 shadow-md'
-                      : 'glass hover:shadow-md'
-                  }`}
+                  onClick={handleCreate}
+                  disabled={isCreating}
+                  className="w-full py-3.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-primary/25 transition-all disabled:opacity-60"
                 >
-                  <FilterSwatch css={filter.css} />
-                  <span className="text-xs font-medium whitespace-nowrap">{filter.name}</span>
+                  {isCreating ? (
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+                      className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                    />
+                  ) : (
+                    <>
+                      <Camera className="w-4 h-4" />
+                      Create room
+                    </>
+                  )}
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Strip Layout */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4">Strip Layout</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {LAYOUTS.map((layout) => (
-                <button
-                  key={layout.id}
-                  onClick={() => setStripLayout(layout.id)}
-                  className={`glass rounded-2xl p-4 text-center transition-all duration-200 ${
-                    stripLayout === layout.id
-                      ? 'ring-2 ring-primary shadow-lg shadow-primary/10'
-                      : 'hover:shadow-md'
-                  }`}
-                >
-                  <div className="mb-2 h-10 flex items-center justify-center">
-                    <LayoutPreview id={layout.id} />
-                  </div>
-                  <span className="text-sm font-medium">{layout.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Create Button */}
-          <div className="pt-4 pb-8">
-            <Button
-              size="lg"
-              onClick={handleCreate}
-              disabled={isCreating}
-              className="w-full rounded-2xl py-6 text-base font-medium"
-            >
-              {isCreating ? (
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                  className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full"
-                />
-              ) : (
-                <>
-                  <Camera className="w-5 h-5 mr-2" />
-                  Create Photobooth Room
-                </>
-              )}
-            </Button>
-          </div>
-        </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </main>
     </div>
   )
