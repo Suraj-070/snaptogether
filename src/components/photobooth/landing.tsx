@@ -118,20 +118,22 @@ export default function LandingView() {
   // Pending deep-link code — set once on mount, consumed when mode=join
   const pendingRef = useRef<string | null>(null)
 
-  // Build a stable callbacks object via ref — never triggers re-analysis
+  // Stable callbacks object — initialised once, updated in an effect so we
+  // never mutate a ref during render (which React 19 strict mode forbids)
   const cbRef = useRef<RoomCallbacks>({
     setRoomCode, setRoomState, setParticipants, setIsCreator,
     setIsWorking, setView, setUserId, setSessionId,
   })
-  // Keep inner functions current without recreating the object
-  cbRef.current.setRoomCode = setRoomCode
-  cbRef.current.setRoomState = setRoomState
-  cbRef.current.setParticipants = setParticipants
-  cbRef.current.setIsCreator = setIsCreator
-  cbRef.current.setIsWorking = setIsWorking
-  cbRef.current.setView = setView
-  cbRef.current.setUserId = setUserId
-  cbRef.current.setSessionId = setSessionId
+  useEffect(() => {
+    cbRef.current.setRoomCode = setRoomCode
+    cbRef.current.setRoomState = setRoomState
+    cbRef.current.setParticipants = setParticipants
+    cbRef.current.setIsCreator = setIsCreator
+    cbRef.current.setIsWorking = setIsWorking
+    cbRef.current.setView = setView
+    cbRef.current.setUserId = setUserId
+    cbRef.current.setSessionId = setSessionId
+  }) // no dep array — runs after every render, keeps ref current
 
   // Auto-fill username from NextAuth session
   useEffect(() => {
