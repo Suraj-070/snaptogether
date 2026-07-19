@@ -344,24 +344,35 @@ export default function StudioView() {
 
     if (hasRemote) {
       const h = Math.min(video.videoHeight, remote!.videoHeight) || 720
-      const wL = Math.round(h * (video.videoWidth / video.videoHeight))
-      const wR = Math.round(h * (remote!.videoWidth / remote!.videoHeight))
+      const wMe = Math.round(h * (video.videoWidth / video.videoHeight))
+      const wPartner = Math.round(h * (remote!.videoWidth / remote!.videoHeight))
+
+      // Canonical layout: creator ALWAYS on left, partner ALWAYS on right.
+      // This ensures both users produce an identical strip image.
+      const wL = isCreator ? wMe : wPartner
+      const wR = isCreator ? wPartner : wMe
       canvas.width = wL + wR
       canvas.height = h
 
       ctx.filter = filterCssValue
-      ctx.save()
-      if (mirrored) {
-        ctx.translate(wL, 0)
-        ctx.scale(-1, 1)
-        ctx.drawImage(video, 0, 0, wL, h)
-      } else {
-        ctx.drawImage(video, 0, 0, wL, h)
-      }
-      ctx.restore()
-      ctx.drawImage(remote!, wL, 0, wR, h)
-      ctx.filter = 'none'
 
+      if (isCreator) {
+        // Left = me (local), Right = partner (remote)
+        ctx.save()
+        if (mirrored) { ctx.translate(wL, 0); ctx.scale(-1, 1) }
+        ctx.drawImage(video, 0, 0, wL, h)
+        ctx.restore()
+        ctx.drawImage(remote!, wL, 0, wR, h)
+      } else {
+        // Left = creator (remote), Right = me (local)
+        ctx.drawImage(remote!, 0, 0, wL, h)
+        ctx.save()
+        if (mirrored) { ctx.translate(wL + wR, 0); ctx.scale(-1, 1); ctx.drawImage(video, -wL, 0, wR, h) }
+        else { ctx.drawImage(video, wL, 0, wR, h) }
+        ctx.restore()
+      }
+
+      ctx.filter = 'none'
       ctx.fillStyle = 'rgba(255,255,255,0.6)'
       ctx.fillRect(wL - 1, 0, 2, h)
     } else {
@@ -396,7 +407,7 @@ export default function StudioView() {
     setTimeout(() => setFlashActive(false), 600)
 
     if (navigator.vibrate) navigator.vibrate(50)
-  }, [selectedFilter, userId, mirrored, addPhoto, remoteStream])
+  }, [selectedFilter, userId, mirrored, addPhoto, remoteStream, isCreator])
 
   const capturePhotoRef = useRef(capturePhoto)
   useEffect(() => { capturePhotoRef.current = capturePhoto }, [capturePhoto])
