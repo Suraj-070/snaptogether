@@ -108,8 +108,8 @@ export default function StudioView() {
   const {
     username, userId, roomCode, isCreator,
     selectedFilter, setSelectedFilter,
-    totalPhotos, setTotalPhotos, capturedPhotos, addPhoto,
-    setView, setRoomState, setParticipants,
+    totalPhotos, setTotalPhotos, capturedPhotos, addPhoto, clearPhotos,
+    setView, setRoomState, setParticipants, setFinalStripData, setChosenPhotos,
     reactions, addReaction,
   } = useAppStore()
 
@@ -160,7 +160,12 @@ export default function StudioView() {
       // Fallback: sentinel missing (e.g. hard refresh in studio).
       // Re-join/create as last resort only.
       console.warn('[Studio] sentinel missing for', roomCode, '— falling back to join/create')
-      if (isCreator) {
+      // Clear any data from a previous session on fresh studio load
+    clearPhotos()
+    setFinalStripData(null)
+    setChosenPhotos([])
+
+    if (isCreator) {
         socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: roomCode, totalPhotos: 6 })
       } else {
         socket.emit('join-room', { code: roomCode, username })
