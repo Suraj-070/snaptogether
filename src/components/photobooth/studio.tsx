@@ -142,6 +142,11 @@ export default function StudioView() {
   useEffect(() => {
     if (!roomCode || !username) return
 
+    // Always clear previous session data when studio mounts
+    clearPhotos()
+    setFinalStripData(null)
+    setChosenPhotos([])
+
     const socket: Socket = getSocket()
 
     const joinOrCreate = () => {
@@ -160,11 +165,6 @@ export default function StudioView() {
       // Fallback: sentinel missing (e.g. hard refresh in studio).
       // Re-join/create as last resort only.
       console.warn('[Studio] sentinel missing for', roomCode, '— falling back to join/create')
-      // Clear any data from a previous session on fresh studio load
-    clearPhotos()
-    setFinalStripData(null)
-    setChosenPhotos([])
-
     if (isCreator) {
         socket.emit('create-room', { username, theme: 'classic', filter: selectedFilter, code: roomCode, totalPhotos: 6 })
       } else {

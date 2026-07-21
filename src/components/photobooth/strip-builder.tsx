@@ -256,7 +256,9 @@ function FrameThumbnail({ frame, active }: { frame: FrameDef; active: boolean })
   )
 }
 
-// ── Stickers ───────────────────────────────────────────────────────────────────
+
+
+// ── Quick stickers (emoji fallback in strip preview) ──────────────────────────
 const QUICK_STICKERS = [
   '❤️','💕','✨','🎉','😍','🥰','😂','🔥','💫','🌸',
   '🦋','🌈','⭐','🎊','💖','🥳','😘','💯','🙌','👑',
@@ -389,10 +391,11 @@ export default function StripBuilderView() {
 
   const onStickerPointerUp = useCallback(() => { setDraggingStickerId(null) }, [])
 
-  const addSticker = (emoji: string) => {
+  // src can be a webp path '/stickers/x.webp' or emoji string
+  const addSticker = (src: string) => {
     setOverlayStickers(prev => [...prev, {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      emoji,
+      emoji: src,
       x: 0.3 + Math.random() * 0.4,
       y: 0.2 + Math.random() * 0.6,
       scale: 1,
@@ -431,11 +434,25 @@ export default function StripBuilderView() {
       for (const s of overlayStickers) {
         const px = s.x * canvas.width
         const py = s.y * canvas.height
-        const size = 64 * s.scale * (canvas.width / 448)
-        ctx.font = `${size}px serif`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(s.emoji, px, py)
+        const size = Math.round(64 * s.scale * (canvas.width / 448))
+        const isWebp = s.emoji.startsWith('/')
+        if (isWebp) {
+          // Load and draw webp sticker image
+          await new Promise<void>(res => {
+            const si = new Image()
+            si.onload = () => {
+              ctx.drawImage(si, px - size / 2, py - size / 2, size, size)
+              res()
+            }
+            si.onerror = () => res()
+            si.src = s.emoji
+          })
+        } else {
+          ctx.font = `${size}px serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(s.emoji, px, py)
+        }
       }
       finalData = canvas.toDataURL('image/jpeg', 0.92)
     }
@@ -640,7 +657,7 @@ export default function StripBuilderView() {
               </div>
             </div>
 
-            {/* Stickers */}
+            {/* Quick sticker preview (emoji) — full custom stickers available after strip is created */}
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-2.5">
                 Stickers · tap to add
@@ -656,6 +673,9 @@ export default function StripBuilderView() {
                   </button>
                 ))}
               </div>
+              <p className="text-[9px] text-muted-foreground mt-1.5">
+                ✦ Custom stickers available after creating your strip
+              </p>
             </div>
           </div>
 
@@ -717,30 +737,45 @@ export default function StripBuilderView() {
                 ))}
               </Reorder.Group>
 
-              {overlayStickers.map(s => (
-                <div
-                  key={s.id}
-                  className="absolute cursor-grab active:cursor-grabbing select-none"
-                  style={{
-                    left: `${s.x * 100}%`,
-                    top: `${s.y * 100}%`,
-                    transform: 'translate(-50%, -50%)',
-                    fontSize: `${28 * s.scale}px`,
-                    zIndex: 20,
-                    touchAction: 'none',
-                  }}
-                  onPointerDown={e => onStickerPointerDown(e, s.id)}
-                >
-                  <span>{s.emoji}</span>
-                  <button
-                    className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center leading-none shadow"
-                    onPointerDown={e => e.stopPropagation()}
-                    onClick={() => removeSticker(s.id)}
+              {overlayStickers.map(s => {
+                const isWebp = s.emoji.startsWith('/')
+                const size = Math.round(48 * s.scale)
+                return (
+                  <div
+                    key={s.id}
+                    className="absolute cursor-grab active:cursor-grabbing select-none"
+                    style={{
+                      left: `${s.x * 100}%`,
+                      top: `${s.y * 100}%`,
+                      transform: 'translate(-50%, -50%)',
+                      width: size,
+                      height: size,
+                      fontSize: `${28 * s.scale}px`,
+                      zIndex: 20,
+                      touchAction: 'none',
+                    }}
+                    onPointerDown={e => onStickerPointerDown(e, s.id)}
                   >
-                    ×
-                  </button>
-                </div>
-              ))}
+                    {isWebp ? (
+                      <img
+                        src={s.emoji}
+                        alt=""
+                        className="w-full h-full object-contain pointer-events-none drop-shadow-lg"
+                        draggable={false}
+                      />
+                    ) : (
+                      <span className="drop-shadow-md">{s.emoji}</span>
+                    )}
+                    <button
+                      className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center leading-none shadow"
+                      onPointerDown={e => e.stopPropagation()}
+                      onClick={() => removeSticker(s.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
 
               <p className="text-center text-[9px] tracking-widest text-muted-foreground mt-2.5 uppercase">
                 SnapTogether · {LAYOUTS.find(l => l.id === stripLayout)?.name}

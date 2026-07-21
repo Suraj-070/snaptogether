@@ -39,6 +39,11 @@ export default function LobbyView() {
   useEffect(() => {
     const socket = getSocket()
 
+    // Re-announce presence on mount (covers lobby reload where socket is new but store has roomCode+username)
+    if (roomCode && username) {
+      socket.emit('rejoin-room', { code: roomCode, username })
+    }
+
     const syncRoom = (data: any) => {
       if (data.room) {
         setRoomState(data.room)

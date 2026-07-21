@@ -1,5 +1,6 @@
 'use client'
 import ThemeToggle from '@/components/theme-toggle'
+import { useStickers, STICKER_CATEGORIES as CUSTOM_CATS } from '@/lib/stickers'
 
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -67,6 +68,9 @@ export default function ResultView() {
   const [selectedSticker, setSelectedSticker] = useState<string | null>(null)
 
   // Giphy
+  const [stickerSource, setStickerSource] = useState<'custom' | 'giphy'>('custom')
+  const { stickers: CUSTOM_STICKERS, loading: stickersLoading } = useStickers()
+  const [customStickerTab, setCustomStickerTab] = useState<string>('All')
   const [stickerQuery, setStickerQuery] = useState('')
   const [stickerResults, setStickerResults] = useState<GiphySticker[]>([])
   const [stickerLoading, setStickerLoading] = useState(false)
@@ -215,7 +219,7 @@ export default function ResultView() {
     activeStickers.forEach(s => {
       const px = s.x * canvas.width
       const py = s.y * canvas.height
-      const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('blob')
+      const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('/') || s.emoji.startsWith('blob')
       if (isUrl) {
         const cachedImg = stickerImageCache.current.get(s.id)
           || [...stickerImageCache.current.values()].find(i => i.src === s.emoji)
@@ -360,6 +364,19 @@ export default function ResultView() {
     setStickers(prev => prev.filter(s => s.id !== id))
     setSelectedSticker(null)
     socket.emit('strip-sticker-remove', { id })
+  }
+
+  // Place any sticker (custom webp or giphy) onto the strip
+  function addStickerToCanvas(s: Sticker) {
+    // Preload into cache so canvas burn works immediately
+    if (s.emoji.startsWith('/') || s.emoji.startsWith('http')) {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = s.emoji
+      img.onload = () => stickerImageCache.current.set(s.id, img)
+    }
+    setStickers(prev => [...prev, s])
+    socket.emit('strip-sticker-add', { ...s })
   }
 
   function scaleSticker(id: string, delta: number) {
@@ -570,40 +587,132 @@ export default function ResultView() {
         {/* ── LEFT: Sticker panel (on desktop) / top (on mobile) ── */}
         <div className="lg:w-72 flex flex-col gap-3 order-2 lg:order-1">
 
-          {/* Giphy search — ALWAYS visible at top */}
+          {/* Sticker panel — tab switcher */}
           <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
-            <div className="px-3 pt-3 pb-2">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-xs font-semibold text-white/70 tracking-wider uppercase">Stickers</span>
-                <span className="text-[9px] text-white/25">Powered by GIPHY</span>
-              </div>
 
-              {/* Search bar */}
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={stickerQuery}
-                    onChange={e => setStickerQuery(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && searchGiphy(stickerQuery)}
-                    placeholder="Search stickers..."
-                    className="w-full bg-white/10 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-white/30 outline-none focus:bg-white/15 transition-colors"
-                  />
+            {/* Source tabs */}
+            <div className="flex border-b border-white/10">
+              <button
+                onClick={() => setStickerSource('custom')}
+                className={`flex-1 py-2.5 text-xs font-semibold tracking-wide transition-all ${
+                  stickerSource === 'custom'
+                    ? 'text-white border-b-2 border-primary bg-white/5'
+                    : 'text-white/40 hover:text-white/70'
+                }`}
+              >
+                ✦ My Stickers
+              </button>
+              <button
+                onClick={() => setStickerSource('giphy')}
+                className={`flex-1 py-2.5 text-xs font-semibold tracking-wide transition-all ${
+                  stickerSource === 'giphy'
+                    ? 'text-white border-b-2 border-primary bg-white/5'
+                    : 'text-white/40 hover:text-white/70'
+                }`}
+              >
+                🎭 GIPHY
+              </button>
+            </div>
+
+            {/* ── Custom stickers tab ── */}
+            {stickerSource === 'custom' && (
+              <div className="p-2">
+                {/* Category tabs — hidden when only one category */}
+                {CUSTOM_CATS.length > 1 && (
+                  <div className="flex gap-1 mb-2 overflow-x-auto no-scrollbar pb-0.5">
+                    {CUSTOM_CATS.map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setCustomStickerTab(cat)}
+                        className={`shrink-0 px-2.5 py-1 rounded-full text-[9px] font-semibold transition-all ${
+                          customStickerTab === cat
+                            ? 'bg-primary text-white'
+                            : 'bg-white/10 text-white/50 hover:text-white/80 hover:bg-white/15'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Sticker grid */}
+                {stickersLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-4 h-4 animate-spin text-white/30" />
+                  </div>
+                ) : CUSTOM_STICKERS.length === 0 ? (
+                  <p className="text-[10px] text-white/30 text-center py-6">
+                    Drop .webp files into<br/><code className="text-white/50">/public/stickers/</code>
+                  </p>
+                ) : (
+                <div className="grid grid-cols-4 gap-1.5 max-h-72 overflow-y-auto no-scrollbar">
+                  {CUSTOM_STICKERS
+                    .filter(s => customStickerTab === 'All' || s.category === customStickerTab)
+                    .map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => {
+                          const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+                          addStickerToCanvas({ id, emoji: s.src, x: 0.35 + Math.random() * 0.3, y: 0.25 + Math.random() * 0.5, scale: 1 })
+                        }}
+                        className="group flex flex-col items-center gap-0.5 p-1.5 rounded-xl hover:bg-white/10 transition-all active:scale-90"
+                        title={s.label}
+                      >
+                        <div className="w-10 h-10 flex items-center justify-center">
+                          <img
+                            src={s.src}
+                            alt={s.label}
+                            className="w-full h-full object-contain group-hover:scale-110 transition-transform drop-shadow"
+                            loading="lazy"
+                            draggable={false}
+                          />
+                        </div>
+                        {s.label && (
+                          <span className="text-[7px] text-white/40 truncate w-full text-center leading-tight">
+                            {s.label}
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  }
                 </div>
-                <button
-                  onClick={() => searchGiphy(stickerQuery)}
-                  disabled={stickerLoading || !stickerQuery.trim()}
-                  className="px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium disabled:opacity-40 shrink-0 hover:bg-primary/90 transition-colors"
-                >
-                  {stickerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Go'}
-                </button>
+                )}
+                <p className="text-[8px] text-white/20 text-center mt-1.5">Tap to place on strip</p>
               </div>
+            )}
 
-              {/* Category presets */}
-              <div className="mt-2 space-y-1.5">
-                <p className="text-[9px] text-white/30 uppercase tracking-wider">Quick picks</p>
-                <div className="grid grid-cols-4 gap-1">
+            {/* ── GIPHY tab ── */}
+            {stickerSource === 'giphy' && (
+              <div className="px-3 pt-3 pb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[9px] text-white/25">Powered by GIPHY</span>
+                </div>
+
+                {/* Search bar */}
+                <div className="flex gap-2 mb-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={stickerQuery}
+                      onChange={e => setStickerQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && searchGiphy(stickerQuery)}
+                      placeholder="Search stickers..."
+                      className="w-full bg-white/10 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-white/30 outline-none focus:bg-white/15 transition-colors"
+                    />
+                  </div>
+                  <button
+                    onClick={() => searchGiphy(stickerQuery)}
+                    disabled={stickerLoading || !stickerQuery.trim()}
+                    className="px-3 py-2 bg-primary text-white rounded-xl text-xs font-medium disabled:opacity-40 shrink-0 hover:bg-primary/90 transition-colors"
+                  >
+                    {stickerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Go'}
+                  </button>
+                </div>
+
+                {/* Quick category grid */}
+                <div className="grid grid-cols-4 gap-1 mb-2">
                   {STICKER_CATEGORIES.map(cat => (
                     <button
                       key={cat.label}
@@ -619,9 +728,10 @@ export default function ResultView() {
                     </button>
                   ))}
                 </div>
-                {/* Tag chips for selected category */}
+
+                {/* Tag chips */}
                 {STICKER_CATEGORIES.find(cat => cat.tags.includes(stickerQuery)) && (
-                  <div className="flex flex-wrap gap-1 pt-0.5">
+                  <div className="flex flex-wrap gap-1 mb-2">
                     {STICKER_CATEGORIES.find(cat => cat.tags.includes(stickerQuery))!.tags.map(tag => (
                       <button
                         key={tag}
@@ -637,29 +747,29 @@ export default function ResultView() {
                     ))}
                   </div>
                 )}
-              </div>
-            </div>
 
-            {/* Results */}
-            {stickerLoading && (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-5 h-5 animate-spin text-white/40" />
-              </div>
-            )}
-            {!stickerLoading && stickerSearched && stickerResults.length === 0 && (
-              <p className="text-center text-white/30 text-xs py-6">No stickers found.</p>
-            )}
-            {!stickerLoading && stickerResults.length > 0 && (
-              <div className="grid grid-cols-4 gap-1 p-2 max-h-64 lg:max-h-96 overflow-y-auto">
-                {stickerResults.map(sticker => (
-                  <button
-                    key={sticker.id}
-                    onClick={() => placeSticker(sticker)}
-                    className="aspect-square rounded-lg overflow-hidden bg-white/5 hover:bg-white/15 hover:scale-105 transition-all active:scale-95 p-1"
-                  >
-                    <img src={sticker.preview} alt="" className="w-full h-full object-contain" loading="lazy" />
-                  </button>
-                ))}
+                {/* Results */}
+                {stickerLoading && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-5 h-5 animate-spin text-white/40" />
+                  </div>
+                )}
+                {!stickerLoading && stickerSearched && stickerResults.length === 0 && (
+                  <p className="text-center text-white/30 text-xs py-4">No stickers found.</p>
+                )}
+                {!stickerLoading && stickerResults.length > 0 && (
+                  <div className="grid grid-cols-4 gap-1 max-h-56 overflow-y-auto no-scrollbar">
+                    {stickerResults.map(sticker => (
+                      <button
+                        key={sticker.id}
+                        onClick={() => placeSticker(sticker)}
+                        className="aspect-square rounded-lg overflow-hidden bg-white/5 hover:bg-white/15 hover:scale-105 transition-all active:scale-95 p-1"
+                      >
+                        <img src={sticker.preview} alt="" className="w-full h-full object-contain" loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -670,7 +780,7 @@ export default function ResultView() {
               <p className="text-[10px] text-white/40 font-semibold tracking-wider uppercase">Placed stickers</p>
               <div className="space-y-1.5">
                 {stickers.map((s) => {
-                  const isUrl = s.emoji.startsWith('http')
+                  const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('/')
                   const isSelected = selectedSticker === s.id
                   return (
                     <div
@@ -912,7 +1022,7 @@ export default function ResultView() {
 
             {/* Sticker overlay */}
             {stickers.map(s => {
-              const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('blob')
+              const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('/') || s.emoji.startsWith('blob')
               const isSelected = selectedSticker === s.id
               return (
                 <div
