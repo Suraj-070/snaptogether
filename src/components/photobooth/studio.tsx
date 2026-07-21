@@ -464,14 +464,19 @@ export default function StudioView() {
       ) => {
         const svw = src.videoWidth  || 640
         const svh = src.videoHeight || 480
+        // Use destination aspect ratio as the target crop
         const dAspect = dw / dh
         const sAspect = svw / svh
         let sx = 0, sy = 0, sw = svw, sh = svh
         if (sAspect > dAspect) { sw = Math.round(svh * dAspect); sx = Math.round((svw - sw) / 2) }
         else                   { sh = Math.round(svw / dAspect); sy = Math.round((svh - sh) / 2) }
         ctx.save()
-        if (flip) { ctx.translate(dx * 2 + dw, 0); ctx.scale(-1, 1) }
-        ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh)
+        if (flip) {
+          ctx.translate(dx + dw, 0); ctx.scale(-1, 1)
+          ctx.drawImage(src, sx, sy, sw, sh, -(dx + dw) + dx, dy, dw, dh)
+        } else {
+          ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh)
+        }
         ctx.restore()
       }
 
@@ -487,32 +492,43 @@ export default function StudioView() {
       ctx.fillStyle = 'rgba(255,255,255,0.6)'
       ctx.fillRect(wL - 1, 0, 2, h)
     } else {
-      // Match object-cover display: center-crop video to a 4:3 frame
-      // so captured photo looks identical to what user saw in the viewfinder
+      // Match EXACTLY what object-cover shows by reading the video element's
+      // rendered dimensions — this is the only reliable way to get the same crop
       const vw = video.videoWidth  || 640
       const vh = video.videoHeight || 480
-      const targetAspect = 4 / 3
-      let sx = 0, sy = 0, sw = vw, sh = vh
+
+      // Get the rendered size of the video element on screen
+      const rect = videoRef.current?.getBoundingClientRect()
+      const renderedW = rect?.width  || vw
+      const renderedH = rect?.height || vh
+      const targetAspect = renderedW / renderedH
+
+      // Replicate object-cover crop: scale video to cover rendered box, center-crop
       const videoAspect = vw / vh
+      let sx = 0, sy = 0, sw = vw, sh = vh
       if (videoAspect > targetAspect) {
-        // video wider than target — crop sides
+        // video wider → crop left/right sides
         sw = Math.round(vh * targetAspect)
         sx = Math.round((vw - sw) / 2)
       } else {
-        // video taller than target — crop top/bottom
+        // video taller → crop top/bottom
         sh = Math.round(vw / targetAspect)
         sy = Math.round((vh - sh) / 2)
       }
-      canvas.width  = sw
-      canvas.height = sh
+
+      // Render at consistent output width for strip
+      const OUT_W = 720
+      const OUT_H = Math.round(OUT_W / targetAspect)
+      canvas.width  = OUT_W
+      canvas.height = OUT_H
 
       ctx.filter = filterCssValue
       if (mirrored) {
-        ctx.translate(canvas.width, 0)
+        ctx.translate(OUT_W, 0)
         ctx.scale(-1, 1)
-        ctx.drawImage(video, sx, sy, sw, sh, -canvas.width, 0, canvas.width, canvas.height)
+        ctx.drawImage(video, sx, sy, sw, sh, -OUT_W, 0, OUT_W, OUT_H)
       } else {
-        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, OUT_W, OUT_H)
       }
       ctx.filter = 'none'
       ctx.setTransform(1, 0, 0, 1, 0, 0)
