@@ -302,22 +302,24 @@ export default function ResultView() {
   useEffect(() => {
     stripBgRef.current = stripBg
     // If bg is a solid colour (not gradient), also re-render strip with it as paper colour
-    if (stripBg && !stripBg.startsWith('linear') && stripBg !== 'transparent' && chosenPhotos.length) {
-      renderStrip(chosenPhotos, {
-        stripBgColor: stripBg,
-        photoBorderColor,
-        photoBorderWidth: photoBorderColor === 'transparent' ? 0 : photoBorderWidth,
-      }).then(data => {
-        if (!data) { redraw(strokes, stickers); return }
-        const img = new Image()
-        img.onload = () => { stripImgRef.current = img; redraw(strokesRef.current, stickersRef.current) }
-        img.src = data
-      })
-    } else {
-      redraw(strokes, stickers)
-    }
+    // if (stripBg && !stripBg.startsWith('linear') && stripBg !== 'transparent' && chosenPhotos.length) {
+    //   renderStrip(chosenPhotos, {
+    //     stripBgColor: stripBg,
+    //     photoBorderColor,
+    //     photoBorderWidth: photoBorderColor === 'transparent' ? 0 : photoBorderWidth,
+    //   }).then(data => {
+    //     if (!data) { redraw(strokes, stickers); return }
+    //     const img = new Image()
+    //     img.onload = () => { stripImgRef.current = img; redraw(strokesRef.current, stickersRef.current) }
+    //     img.src = data
+    //   })
+    // } else {
+    //   redraw(strokes, stickers)
+    // }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  redraw(strokes, stickers)
   }, [stripBg])
+  
   useEffect(() => { redraw(strokes, stickers) }, [strokes, stickers, redraw])
 
   // ── Load strip image (after redraw is defined) ──
@@ -332,10 +334,8 @@ export default function ResultView() {
   useEffect(() => {
     if (!chosenPhotos.length) return
     renderStrip(chosenPhotos, {
-      photoBorderColor,
-      photoBorderWidth: photoBorderColor === 'transparent' ? 0 : photoBorderWidth,
-      stripBgColor: stripBg !== 'transparent' ? undefined : undefined, // strip uses its own bg
-    }).then(data => {
+  stripBgColor: (!photoBorderColor || photoBorderColor === 'transparent') ? '#faf8f5' : photoBorderColor,
+}).then(data => {
       if (!data) return
       const img = new Image()
       img.onload = () => { stripImgRef.current = img; redraw(strokesRef.current, stickersRef.current) }
@@ -1398,8 +1398,8 @@ export default function ResultView() {
             {/* Tabs */}
             <div className="flex border-b border-white/10">
               {([
-                { id: 'bg',     label: 'Paper Colour', icon: '🎨' },
-                { id: 'border', label: 'Photo Border', icon: '⬜' },
+                { id: 'bg',     label: 'Background', icon: '🎨' },
+                { id: 'border', label: 'Paper Border', icon: '⬜' },
               ] as const).map(tab => (
                 <button
                   key={tab.id}
@@ -1531,7 +1531,7 @@ export default function ResultView() {
               <div className="p-3 space-y-3">
                 {/* Clear */}
                 <button
-                  onClick={() => { setPhotoBorderColor('transparent'); setBorderHexInput('') }}
+                  onClick={() => { setPhotoBorderColor('#faf8f5'); setBorderHexInput('#faf8f5') }}
                   className={`w-full py-2 rounded-xl text-[11px] font-semibold transition-all border ${
                     photoBorderColor === 'transparent'
                       ? 'border-primary text-primary bg-primary/10'
