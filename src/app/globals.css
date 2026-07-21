@@ -148,6 +148,7 @@ html.light {
     -webkit-text-size-adjust: 100%;
     scroll-behavior: smooth;
     transition: background-color 0.3s ease, color 0.3s ease;
+    font-size: 17px;          /* base up from 16px — scales rem units */
   }
   body {
     background: var(--background);
@@ -157,6 +158,8 @@ html.light {
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior: none;
     transition: background-color 0.3s ease, color 0.3s ease;
+    font-size: 1rem;
+    line-height: 1.6;
   }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -324,3 +327,19 @@ input[type=range]::-moz-range-thumb {
   box-shadow: 0 1px 4px rgba(0,0,0,0.3);
   cursor: pointer;
 }
+
+/* ── Font size scaling — bumps all hardcoded tiny sizes up ──────────────────── */
+/* Tailwind text-xs = 12px → effectively 13px with 17px base               */
+/* We override the most common tiny inline sizes globally                   */
+
+/* Labels, badges, tags — was 9-10px, now 11-12px */
+.text-\[9px\]  { font-size: 11px !important; }
+.text-\[10px\] { font-size: 12px !important; }
+.text-\[11px\] { font-size: 13px !important; }
+.text-\[12px\] { font-size: 13px !important; }
+.text-\[13px\] { font-size: 14px !important; }
+
+/* Slightly bump standard Tailwind text sizes too */
+.text-xs  { font-size: 0.8125rem; }   /* 13.8px */
+.text-sm  { font-size: 0.9375rem; }   /* 15.9px */
+.text-base{ font-size: 1.0625rem; }   /* 18px   */
