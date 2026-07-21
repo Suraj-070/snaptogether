@@ -258,13 +258,6 @@ function FrameThumbnail({ frame, active }: { frame: FrameDef; active: boolean })
 
 
 
-// ── Quick stickers (emoji fallback in strip preview) ──────────────────────────
-const QUICK_STICKERS = [
-  '❤️','💕','✨','🎉','😍','🥰','😂','🔥','💫','🌸',
-  '🦋','🌈','⭐','🎊','💖','🥳','😘','💯','🙌','👑',
-  '🌺','🍓','🫶','💝','🎀','🧸','🪄','🌙','☁️','🦄',
-]
-
 // ── Frame tag colours ─────────────────────────────────────────────────────────
 const TAG_COLOURS: Record<string, string> = {
   PLAIN:    'bg-neutral-100 text-neutral-500',
@@ -656,24 +649,10 @@ export default function StripBuilderView() {
               </div>
             </div>
 
-            {/* Quick sticker preview (emoji) — full custom stickers available after strip is created */}
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground mb-2.5">
-                Stickers · tap to add
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {QUICK_STICKERS.map(e => (
-                  <button
-                    key={e}
-                    onClick={() => addSticker(e)}
-                    className="w-10 h-10 rounded-xl bg-card hover:bg-card shadow-sm hover:shadow-md border border-border hover:scale-110 active:scale-95 transition-all text-xl flex items-center justify-center"
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[9px] text-muted-foreground mt-1.5">
-                ✦ Custom stickers available after creating your strip
+            {/* Stickers note */}
+            <div className="py-3 px-4 rounded-2xl bg-card border border-border text-center">
+              <p className="text-[11px] text-muted-foreground">
+                ✦ Stickers available after creating your strip
               </p>
             </div>
           </div>

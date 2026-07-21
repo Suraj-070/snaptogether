@@ -456,35 +456,64 @@ export default function StudioView() {
 
       ctx.filter = filterCssValue
 
+      // Helper: draw video center-cropped into a destination rect (matches object-cover)
+      const drawCoverCrop = (
+        src: HTMLVideoElement,
+        dx: number, dy: number, dw: number, dh: number,
+        flip = false,
+      ) => {
+        const svw = src.videoWidth  || 640
+        const svh = src.videoHeight || 480
+        const dAspect = dw / dh
+        const sAspect = svw / svh
+        let sx = 0, sy = 0, sw = svw, sh = svh
+        if (sAspect > dAspect) { sw = Math.round(svh * dAspect); sx = Math.round((svw - sw) / 2) }
+        else                   { sh = Math.round(svw / dAspect); sy = Math.round((svh - sh) / 2) }
+        ctx.save()
+        if (flip) { ctx.translate(dx * 2 + dw, 0); ctx.scale(-1, 1) }
+        ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh)
+        ctx.restore()
+      }
+
       if (isCreator) {
-        // Left = me (local), Right = partner (remote)
-        ctx.save()
-        if (mirrored) { ctx.translate(wL, 0); ctx.scale(-1, 1) }
-        ctx.drawImage(video, 0, 0, wL, h)
-        ctx.restore()
-        ctx.drawImage(remote!, wL, 0, wR, h)
+        drawCoverCrop(video,   0,  0, wL, h, mirrored)
+        drawCoverCrop(remote!, wL, 0, wR, h, false)
       } else {
-        // Left = creator (remote), Right = me (local)
-        ctx.drawImage(remote!, 0, 0, wL, h)
-        ctx.save()
-        if (mirrored) { ctx.translate(wL + wR, 0); ctx.scale(-1, 1); ctx.drawImage(video, -wL, 0, wR, h) }
-        else { ctx.drawImage(video, wL, 0, wR, h) }
-        ctx.restore()
+        drawCoverCrop(remote!, 0,  0, wL, h, false)
+        drawCoverCrop(video,   wL, 0, wR, h, mirrored)
       }
 
       ctx.filter = 'none'
       ctx.fillStyle = 'rgba(255,255,255,0.6)'
       ctx.fillRect(wL - 1, 0, 2, h)
     } else {
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+      // Match object-cover display: center-crop video to a 4:3 frame
+      // so captured photo looks identical to what user saw in the viewfinder
+      const vw = video.videoWidth  || 640
+      const vh = video.videoHeight || 480
+      const targetAspect = 4 / 3
+      let sx = 0, sy = 0, sw = vw, sh = vh
+      const videoAspect = vw / vh
+      if (videoAspect > targetAspect) {
+        // video wider than target — crop sides
+        sw = Math.round(vh * targetAspect)
+        sx = Math.round((vw - sw) / 2)
+      } else {
+        // video taller than target — crop top/bottom
+        sh = Math.round(vw / targetAspect)
+        sy = Math.round((vh - sh) / 2)
+      }
+      canvas.width  = sw
+      canvas.height = sh
 
       ctx.filter = filterCssValue
       if (mirrored) {
         ctx.translate(canvas.width, 0)
         ctx.scale(-1, 1)
+        ctx.drawImage(video, sx, sy, sw, sh, -canvas.width, 0, canvas.width, canvas.height)
+      } else {
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
       }
-      ctx.drawImage(video, 0, 0)
       ctx.filter = 'none'
       ctx.setTransform(1, 0, 0, 1, 0, 0)
     }

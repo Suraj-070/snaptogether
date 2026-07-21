@@ -9,7 +9,7 @@ export interface StripOptions {
   frameId?: string
 }
 
-const PAD = 24
+const PAD = 32   // generous horizontal mat margin
 const GAP = 10
 const PHOTO_W = 400
 const FOOTER_H = 34   // premium footer height
@@ -43,10 +43,26 @@ function roundRect(
 
 // ─── Premium strip footer ─────────────────────────────────────────────────────
 // Clean minimal bottom strip — no big header, just a tasteful mark
-// drawPremiumFooter — intentionally blank, strip is photo-only
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function drawPremiumFooter(_ctx: CanvasRenderingContext2D, _cw: number, _ch: number, _n: number, _cap?: string) {
-  // no footer — clean aesthetic
+function drawPremiumFooter(
+  ctx: CanvasRenderingContext2D,
+  cw: number,
+  ch: number,
+) {
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', year: 'numeric',
+  })
+
+  ctx.save()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  // Very light spaced tracking — like embossed print date
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'
+  ctx.font = '900 10px system-ui, sans-serif'
+  ctx.letterSpacing = '0.18em'
+  ctx.fillText(dateStr.toUpperCase(), cw / 2, ch - FOOTER_H / 2)
+
+  ctx.restore()
 }
 
 function drawHeader(
@@ -83,7 +99,7 @@ async function renderClassic(
   const totalPhotoH = heights.reduce((a, b) => a + b, 0) + photoGap * (imgs.length - 1)
 
   canvas.width  = PHOTO_W + PAD * 2
-  canvas.height = topPad + totalPhotoH + PAD  // bottom breathing room only
+  canvas.height = topPad + totalPhotoH + FOOTER_H
 
   // Warm cream background — feels like premium photo paper
   ctx.fillStyle = '#faf8f5'
@@ -110,7 +126,7 @@ async function renderClassic(
   })
 
   // Premium footer — date left, ✦ centre, wordmark right
-  drawPremiumFooter(ctx, canvas.width, canvas.height, photos.length, caption || undefined)
+  drawPremiumFooter(ctx, canvas.width, canvas.height)
 
   return canvas.toDataURL('image/jpeg', 0.95)  // slightly higher quality
 }
@@ -130,7 +146,7 @@ async function renderMagazine(
   const heroH = Math.round(heroW * 1.25)
   const rightPhotos = photos.slice(1, 4)
   const rightH = Math.round((heroH - GAP * (rightPhotos.length - 1)) / rightPhotos.length)
-  const totalH = PAD + heroH + PAD
+  const totalH = PAD + heroH + FOOTER_H
   canvas.width = W; canvas.height = totalH
 
   ctx.fillStyle = '#faf8f5'
@@ -156,7 +172,7 @@ async function renderMagazine(
     ctx.restore()
   })
 
-  drawPremiumFooter(ctx, W, totalH, photos.length)
+  drawPremiumFooter(ctx, W, totalH)
   return canvas.toDataURL('image/jpeg', 0.95)
 }
 
@@ -178,7 +194,7 @@ async function renderCouple(
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
   const rowH = Math.round(colW * (imgs[0].naturalHeight / imgs[0].naturalWidth))
   const rows = Math.ceil(photos.length / 2)
-  const H = PAD + rows * rowH + (rows - 1) * GAP + PAD
+  const H = PAD + rows * rowH + (rows - 1) * GAP + FOOTER_H
 
   canvas.width = W; canvas.height = H
 
@@ -224,7 +240,7 @@ async function renderCouple(
     ctx.fillText('♥', PAD + colW + GAP / 2, y + rowH / 2 + 5)
   }
 
-  drawPremiumFooter(ctx, W, H, photos.length)
+  drawPremiumFooter(ctx, W, H)
   return canvas.toDataURL('image/jpeg', 0.95)
 }
 
@@ -241,7 +257,7 @@ async function renderMemory(
   const photoH = Math.round(PHOTO_W * (imgs[0].naturalHeight / imgs[0].naturalWidth))
   const CARD_PAD = PAD
   const captionH = caption ? 36 : 0
-  const H = PAD + CARD_PAD + photoH + (captionH || 0) + PAD
+  const H = PAD + CARD_PAD + photoH + (captionH || 0) + FOOTER_H
 
   canvas.width = W; canvas.height = H
 
@@ -282,7 +298,7 @@ async function renderMemory(
   }
   if (line) ctx.fillText(line, W / 2, lineY)
 
-  drawPremiumFooter(ctx, W, H, photos.length, caption || undefined)
+  drawPremiumFooter(ctx, W, H)
   return canvas.toDataURL('image/jpeg', 0.95)
 }
 
