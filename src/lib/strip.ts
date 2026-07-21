@@ -12,6 +12,7 @@ export interface StripOptions {
 const PAD = 24
 const GAP = 10
 const PHOTO_W = 400
+const FOOTER_H = 34   // premium footer height
 const CORNER = 8
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -40,6 +41,52 @@ function roundRect(
   ctx.closePath()
 }
 
+// ─── Premium strip footer ─────────────────────────────────────────────────────
+// Clean minimal bottom strip — no big header, just a tasteful mark
+function drawPremiumFooter(
+  ctx: CanvasRenderingContext2D,
+  cw: number,
+  ch: number,
+  photoCount: number,
+  caption?: string,
+) {
+  const footerTop = ch - FOOTER_H
+  // Soft warm footer bg
+  ctx.fillStyle = '#fdfbf8'
+  ctx.fillRect(0, footerTop, cw, FOOTER_H)
+
+  // Top hairline
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)'
+  ctx.lineWidth = 0.75
+  ctx.beginPath()
+  ctx.moveTo(PAD, footerTop)
+  ctx.lineTo(cw - PAD, footerTop)
+  ctx.stroke()
+
+  const midY = footerTop + FOOTER_H / 2
+
+  // Left: small dot + caption or date
+  const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  ctx.fillStyle = 'rgba(0,0,0,0.28)'
+  ctx.font = `10px "Georgia", serif`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(caption || dateStr, PAD + 2, midY)
+
+  // Centre: ✦ mark
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'
+  ctx.font = '11px serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('✦', cw / 2, midY)
+
+  // Right: snaptogether wordmark — ultra light
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'
+  ctx.font = `italic 10px "Georgia", serif`
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('snaptogether', cw - PAD - 2, midY)
+}
+
 function drawHeader(
   ctx: CanvasRenderingContext2D,
   cw: number,
@@ -62,63 +109,48 @@ async function renderClassic(
   photos: CapturedPhoto[],
   opts: StripOptions,
 ): Promise<string | null> {
-  const { showHeader = true, showCaption = false, caption = '' } = opts
+  const { caption = '' } = opts
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
   const heights = imgs.map(img => Math.round(PHOTO_W * (img.naturalHeight / img.naturalWidth)))
-  const headerH = showHeader ? 72 : PAD
-  const footerH = showCaption && caption ? 72 : (showHeader ? 40 : PAD)
-  canvas.width = PHOTO_W + PAD * 2
-  canvas.height = headerH + heights.reduce((a, b) => a + b + GAP, 0) + footerH
 
-  ctx.fillStyle = '#faf9f7'
+  // Premium layout: no top header, photos with tight gaps, clean footer
+  const topPad   = PAD         // minimal top breathing room
+  const photoGap = 3           // very tight gap between photos (film-like)
+  const totalPhotoH = heights.reduce((a, b) => a + b, 0) + photoGap * (imgs.length - 1)
+
+  canvas.width  = PHOTO_W + PAD * 2
+  canvas.height = topPad + totalPhotoH + FOOTER_H
+
+  // Warm cream background — feels like premium photo paper
+  ctx.fillStyle = '#faf8f5'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
-  ctx.strokeStyle = '#e5e2de'
-  ctx.lineWidth = 1.5
-  ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2)
 
-  if (showHeader) {
-    drawHeader(ctx, canvas.width, 'SnapTogether',
-      new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      '#333', '#999')
-  }
-
-  let y = headerH
+  // Draw photos — no rounded corners, edge-to-edge strip feel
+  let y = topPad
   imgs.forEach((img, i) => {
     const h = heights[i]
+    // Subtle vignette shadow between photos
+    if (i > 0) {
+      const grad = ctx.createLinearGradient(0, y - photoGap, 0, y + 4)
+      grad.addColorStop(0, 'rgba(0,0,0,0.08)')
+      grad.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = grad
+      ctx.fillRect(PAD, y - photoGap, PHOTO_W, 6)
+    }
     ctx.save()
-    roundRect(ctx, PAD, y, PHOTO_W, h, CORNER)
+    roundRect(ctx, PAD, y, PHOTO_W, h, 2)   // minimal corner radius
     ctx.clip()
     ctx.drawImage(img, PAD, y, PHOTO_W, h)
     ctx.restore()
-    y += h + GAP
+    y += h + photoGap
   })
 
-  if (showCaption && caption) {
-    ctx.fillStyle = '#555'
-    ctx.font = 'italic 13px Georgia, serif'
-    ctx.textAlign = 'center'
-    const maxW = canvas.width - PAD * 2
-    const words = caption.split(' ')
-    let line = ''
-    let lineY = canvas.height - 52
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word
-      if (ctx.measureText(test).width > maxW && line) {
-        ctx.fillText(line, canvas.width / 2, lineY)
-        line = word; lineY += 18
-      } else line = test
-    }
-    if (line) ctx.fillText(line, canvas.width / 2, lineY)
-  }
-  if (showHeader) {
-    ctx.fillStyle = '#bbb'
-    ctx.font = '9px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText(`${photos.length} memories captured together`, canvas.width / 2, canvas.height - 14)
-  }
-  return canvas.toDataURL('image/jpeg', 0.92)
+  // Premium footer — date left, ✦ centre, wordmark right
+  drawPremiumFooter(ctx, canvas.width, canvas.height, photos.length, caption || undefined)
+
+  return canvas.toDataURL('image/jpeg', 0.95)  // slightly higher quality
 }
 
 // ─── Magazine: big hero left, 2 smaller right ─────────────────────────────────
@@ -130,36 +162,20 @@ async function renderMagazine(
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
   const W = 900
-  const HEADER = 72
-  const FOOTER = 40
   // hero takes left half; right column gets up to 3 photos stacked
   const heroW = Math.round(W * 0.55) - PAD * 2 - GAP / 2
   const colW = W - PAD * 2 - GAP - heroW
   const heroH = Math.round(heroW * 1.25)
   const rightPhotos = photos.slice(1, 4)
   const rightH = Math.round((heroH - GAP * (rightPhotos.length - 1)) / rightPhotos.length)
-  const totalH = HEADER + heroH + FOOTER
+  const totalH = PAD + heroH + FOOTER_H
   canvas.width = W; canvas.height = totalH
 
-  ctx.fillStyle = '#fff'
+  ctx.fillStyle = '#faf8f5'
   ctx.fillRect(0, 0, W, totalH)
 
-  // header bar
-  ctx.fillStyle = '#111'
-  ctx.fillRect(0, 0, W, HEADER)
-  ctx.fillStyle = '#fff'
-  ctx.font = 'bold 20px system-ui, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillText('SnapTogether', PAD, 38)
-  ctx.fillStyle = 'rgba(255,255,255,0.45)'
-  ctx.font = '11px system-ui, sans-serif'
-  ctx.fillText(
-    new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
-    PAD, 56,
-  )
-
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
-  const heroX = PAD; const heroY = HEADER + GAP
+  const heroX = PAD; const heroY = PAD
 
   ctx.save()
   roundRect(ctx, heroX, heroY, heroW, heroH, CORNER)
@@ -178,12 +194,8 @@ async function renderMagazine(
     ctx.restore()
   })
 
-  ctx.fillStyle = '#bbb'
-  ctx.font = '10px system-ui, sans-serif'
-  ctx.textAlign = 'right'
-  ctx.fillText('snaptogether.app', W - PAD, totalH - 14)
-
-  return canvas.toDataURL('image/jpeg', 0.92)
+  drawPremiumFooter(ctx, W, totalH, photos.length)
+  return canvas.toDataURL('image/jpeg', 0.95)
 }
 
 // ─── Couple: 2-column, matching pairs ─────────────────────────────────────────
@@ -197,7 +209,6 @@ async function renderCouple(
   const { isCreator = true } = opts
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
-  const HEADER = 72; const FOOTER = 44
   const colW = Math.round(PHOTO_W * 0.9)
   const W = PAD * 2 + colW * 2 + GAP * 3
 
@@ -205,41 +216,28 @@ async function renderCouple(
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
   const rowH = Math.round(colW * (imgs[0].naturalHeight / imgs[0].naturalWidth))
   const rows = Math.ceil(photos.length / 2)
-  const H = HEADER + rows * rowH + (rows - 1) * GAP + FOOTER
+  const H = PAD + rows * rowH + (rows - 1) * GAP + FOOTER_H
 
   canvas.width = W; canvas.height = H
 
-  // Pastel pink background
-  ctx.fillStyle = '#fff5f7'
+  // Warm cream background
+  ctx.fillStyle = '#faf8f5'
   ctx.fillRect(0, 0, W, H)
-  ctx.strokeStyle = '#ffd6dd'
-  ctx.lineWidth = 1.5
-  ctx.strokeRect(1, 1, W - 2, H - 2)
 
-  // Header
-  ctx.fillStyle = '#d63a5a'
-  ctx.font = 'bold 17px system-ui, sans-serif'
+  // Subtle column name labels — minimal
+  const leftLabel = isCreator ? 'you' : 'them'
+  const rightLabel = isCreator ? 'them' : 'you'
+  ctx.font = 'italic 9px Georgia, serif'
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'
   ctx.textAlign = 'center'
-  ctx.fillText('SnapTogether 💕', W / 2, 36)
-  ctx.fillStyle = '#e8889a'
-  ctx.font = '11px system-ui, sans-serif'
-  ctx.fillText(
-    new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    W / 2, 55,
-  )
-
-  // Column labels
-  const leftLabel = isCreator ? 'Me' : 'Partner'
-  const rightLabel = isCreator ? 'Partner' : 'Me'
-  ctx.font = 'bold 10px system-ui, sans-serif'
-  ctx.fillStyle = '#cc3355'
-  ctx.textAlign = 'center'
-  ctx.fillText(leftLabel.toUpperCase(), PAD + colW / 2, 68)
-  ctx.fillText(rightLabel.toUpperCase(), PAD + colW + GAP + colW / 2, 68)
+  ctx.textBaseline = 'top'
+  ctx.fillText(leftLabel, PAD + colW / 2, 6)
+  ctx.fillText(rightLabel, PAD + colW + GAP + colW / 2, 6)
+  ctx.textBaseline = 'alphabetic'
 
   // Photos in pairs
   for (let row = 0; row < rows; row++) {
-    const y = HEADER + row * (rowH + GAP)
+    const y = PAD + row * (rowH + GAP)
     const leftIdx = row * 2
     const rightIdx = row * 2 + 1
 
@@ -264,11 +262,8 @@ async function renderCouple(
     ctx.fillText('♥', PAD + colW + GAP / 2, y + rowH / 2 + 5)
   }
 
-  ctx.fillStyle = '#e8889a'
-  ctx.font = 'italic 10px Georgia, serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('captured together, wherever you are', W / 2, H - 14)
-  return canvas.toDataURL('image/jpeg', 0.92)
+  drawPremiumFooter(ctx, W, H, photos.length)
+  return canvas.toDataURL('image/jpeg', 0.95)
 }
 
 // ─── Memory Card: polaroid feel, date + caption ───────────────────────────────
@@ -282,52 +277,34 @@ async function renderMemory(
   const W = PHOTO_W + PAD * 3
   const imgs = await Promise.all(photos.slice(0, 3).map(p => loadImage(p.dataUrl)))
   const photoH = Math.round(PHOTO_W * (imgs[0].naturalHeight / imgs[0].naturalWidth))
-  const HEADER = 60; const CARD_PAD = PAD
-  const captionH = 90
-  const H = HEADER + CARD_PAD + photoH + captionH + CARD_PAD
+  const CARD_PAD = PAD
+  const captionH = caption ? 36 : 0
+  const H = PAD + CARD_PAD + photoH + captionH + FOOTER_H
 
   canvas.width = W; canvas.height = H
 
-  // Warm cream
-  ctx.fillStyle = '#f8f5ee'
+  // Warm cream paper
+  ctx.fillStyle = '#faf8f5'
   ctx.fillRect(0, 0, W, H)
-
-  // Top strip tape effect
-  ctx.fillStyle = 'rgba(255,220,100,0.35)'
-  const tapeW = 60; const tapeH = 18
-  ctx.save()
-  ctx.translate(W / 2, HEADER / 3)
-  ctx.rotate(-0.03)
-  ctx.fillRect(-tapeW / 2, -tapeH / 2, tapeW, tapeH)
-  ctx.restore()
-
-  // "SnapTogether" stamp top
-  ctx.fillStyle = '#7c6a52'
-  ctx.font = 'bold 13px Georgia, serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('SnapTogether', W / 2, HEADER / 2 + 4)
-  ctx.fillStyle = '#b0967a'
-  ctx.font = '10px Georgia, serif'
-  ctx.fillText('a memory', W / 2, HEADER / 2 + 18)
 
   // Main photo (only first)
   ctx.save()
   ctx.shadowColor = 'rgba(0,0,0,0.12)'
   ctx.shadowBlur = 10
   ctx.shadowOffsetY = 4
-  roundRect(ctx, CARD_PAD, HEADER + CARD_PAD, PHOTO_W, photoH, 4)
+  roundRect(ctx, CARD_PAD, PAD + CARD_PAD, PHOTO_W, photoH, 4)
   ctx.fillStyle = '#fff'
   ctx.fill()
   ctx.restore()
 
   ctx.save()
-  roundRect(ctx, CARD_PAD + 6, HEADER + CARD_PAD + 6, PHOTO_W - 12, photoH - 12, 2)
+  roundRect(ctx, CARD_PAD + 6, PAD + CARD_PAD + 6, PHOTO_W - 12, photoH - 12, 2)
   ctx.clip()
-  ctx.drawImage(imgs[0], CARD_PAD + 6, HEADER + CARD_PAD + 6, PHOTO_W - 12, photoH - 12)
+  ctx.drawImage(imgs[0], CARD_PAD + 6, PAD + CARD_PAD + 6, PHOTO_W - 12, photoH - 12)
   ctx.restore()
 
   // Caption area
-  const capY = HEADER + CARD_PAD + photoH + 16
+  const capY = PAD + CARD_PAD + photoH + 16
   ctx.fillStyle = '#5a4a38'
   ctx.font = 'italic 14px Georgia, serif'
   ctx.textAlign = 'center'
@@ -343,12 +320,8 @@ async function renderMemory(
   }
   if (line) ctx.fillText(line, W / 2, lineY)
 
-  const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-  ctx.fillStyle = '#b0967a'
-  ctx.font = '10px system-ui, sans-serif'
-  ctx.fillText(dateStr, W / 2, H - 16)
-
-  return canvas.toDataURL('image/jpeg', 0.92)
+  drawPremiumFooter(ctx, W, H, photos.length, caption || undefined)
+  return canvas.toDataURL('image/jpeg', 0.95)
 }
 
 // ─── Frame overlay ───────────────────────────────────────────────────────────
