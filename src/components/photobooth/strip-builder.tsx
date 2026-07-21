@@ -414,7 +414,6 @@ export default function StripBuilderView() {
     const stripData = await renderStrip(chosen, {
       layout: stripLayout,
       isCreator,
-      showHeader: true,
       frameId: selectedFrame,
     })
     if (!stripData) {

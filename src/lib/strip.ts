@@ -43,48 +43,10 @@ function roundRect(
 
 // ─── Premium strip footer ─────────────────────────────────────────────────────
 // Clean minimal bottom strip — no big header, just a tasteful mark
-function drawPremiumFooter(
-  ctx: CanvasRenderingContext2D,
-  cw: number,
-  ch: number,
-  photoCount: number,
-  caption?: string,
-) {
-  const footerTop = ch - FOOTER_H
-  // Soft warm footer bg
-  ctx.fillStyle = '#fdfbf8'
-  ctx.fillRect(0, footerTop, cw, FOOTER_H)
-
-  // Top hairline
-  ctx.strokeStyle = 'rgba(0,0,0,0.06)'
-  ctx.lineWidth = 0.75
-  ctx.beginPath()
-  ctx.moveTo(PAD, footerTop)
-  ctx.lineTo(cw - PAD, footerTop)
-  ctx.stroke()
-
-  const midY = footerTop + FOOTER_H / 2
-
-  // Left: small dot + caption or date
-  const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  ctx.fillStyle = 'rgba(0,0,0,0.28)'
-  ctx.font = `10px "Georgia", serif`
-  ctx.textAlign = 'left'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(caption || dateStr, PAD + 2, midY)
-
-  // Centre: ✦ mark
-  ctx.fillStyle = 'rgba(0,0,0,0.18)'
-  ctx.font = '11px serif'
-  ctx.textAlign = 'center'
-  ctx.fillText('✦', cw / 2, midY)
-
-  // Right: snaptogether wordmark — ultra light
-  ctx.fillStyle = 'rgba(0,0,0,0.22)'
-  ctx.font = `italic 10px "Georgia", serif`
-  ctx.textAlign = 'right'
-  ctx.textBaseline = 'middle'
-  ctx.fillText('snaptogether', cw - PAD - 2, midY)
+// drawPremiumFooter — intentionally blank, strip is photo-only
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function drawPremiumFooter(_ctx: CanvasRenderingContext2D, _cw: number, _ch: number, _n: number, _cap?: string) {
+  // no footer — clean aesthetic
 }
 
 function drawHeader(
@@ -121,7 +83,7 @@ async function renderClassic(
   const totalPhotoH = heights.reduce((a, b) => a + b, 0) + photoGap * (imgs.length - 1)
 
   canvas.width  = PHOTO_W + PAD * 2
-  canvas.height = topPad + totalPhotoH + FOOTER_H
+  canvas.height = topPad + totalPhotoH + PAD  // bottom breathing room only
 
   // Warm cream background — feels like premium photo paper
   ctx.fillStyle = '#faf8f5'
@@ -168,7 +130,7 @@ async function renderMagazine(
   const heroH = Math.round(heroW * 1.25)
   const rightPhotos = photos.slice(1, 4)
   const rightH = Math.round((heroH - GAP * (rightPhotos.length - 1)) / rightPhotos.length)
-  const totalH = PAD + heroH + FOOTER_H
+  const totalH = PAD + heroH + PAD
   canvas.width = W; canvas.height = totalH
 
   ctx.fillStyle = '#faf8f5'
@@ -216,7 +178,7 @@ async function renderCouple(
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
   const rowH = Math.round(colW * (imgs[0].naturalHeight / imgs[0].naturalWidth))
   const rows = Math.ceil(photos.length / 2)
-  const H = PAD + rows * rowH + (rows - 1) * GAP + FOOTER_H
+  const H = PAD + rows * rowH + (rows - 1) * GAP + PAD
 
   canvas.width = W; canvas.height = H
 
@@ -279,7 +241,7 @@ async function renderMemory(
   const photoH = Math.round(PHOTO_W * (imgs[0].naturalHeight / imgs[0].naturalWidth))
   const CARD_PAD = PAD
   const captionH = caption ? 36 : 0
-  const H = PAD + CARD_PAD + photoH + captionH + FOOTER_H
+  const H = PAD + CARD_PAD + photoH + (captionH || 0) + PAD
 
   canvas.width = W; canvas.height = H
 

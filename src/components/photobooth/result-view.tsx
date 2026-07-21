@@ -1281,28 +1281,7 @@ export default function ResultView() {
             )}
           </div>
 
-          {/* Strip overlay options */}
-          <div className="bg-white/5 rounded-2xl p-3 border border-white/10">
-            <p className="text-[10px] text-white/50 font-semibold tracking-wider uppercase mb-3">Strip options</p>
-            <div className="flex flex-col gap-2.5">
-              <label className="flex items-center justify-between cursor-pointer group">
-                <span className="text-xs text-white/70 group-hover:text-white transition-colors">Show name + date</span>
-                <button onClick={() => setShowStripHeader(v => !v)} className="shrink-0">
-                  {showStripHeader
-                    ? <ToggleRight className="w-8 h-8 text-primary" />
-                    : <ToggleLeft className="w-8 h-8 text-white/30" />}
-                </button>
-              </label>
-              <label className="flex items-center justify-between cursor-pointer group">
-                <span className="text-xs text-white/70 group-hover:text-white transition-colors">Show caption on strip</span>
-                <button onClick={() => setShowStripCaption(v => !v)} className="shrink-0">
-                  {showStripCaption
-                    ? <ToggleRight className="w-8 h-8 text-primary" />
-                    : <ToggleLeft className="w-8 h-8 text-white/30" />}
-                </button>
-              </label>
-            </div>
-          </div>
+
 
           {/* Room code */}
           <div className="bg-white/5 rounded-2xl p-3 border border-white/10 text-center">
