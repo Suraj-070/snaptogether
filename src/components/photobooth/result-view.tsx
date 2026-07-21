@@ -74,6 +74,10 @@ export default function ResultView() {
   const [stripBg, setStripBg] = useState<string>('transparent')  // strip background colour
   const [bgHexInput, setBgHexInput] = useState<string>('')
   const [showBgPanel, setShowBgPanel] = useState(false)
+  const [photoBorderColor, setPhotoBorderColor] = useState<string>('transparent')
+  const [photoBorderWidth, setPhotoBorderWidth] = useState<number>(3)
+  const [borderHexInput, setBorderHexInput] = useState<string>('')
+  const [showBorderPanel, setShowBorderPanel] = useState(false)
   const { stickers: CUSTOM_STICKERS, loading: stickersLoading } = useStickers()
   const [customStickerTab, setCustomStickerTab] = useState<string>('All')
   const [stickerQuery, setStickerQuery] = useState('')
@@ -305,6 +309,21 @@ export default function ResultView() {
     img.onload = () => { stripImgRef.current = img; redraw() }
     img.src = finalStripData
   }, [finalStripData, redraw])
+
+  // Re-render strip when photo border changes
+  useEffect(() => {
+    if (!chosenPhotos.length) return
+    renderStrip(chosenPhotos, {
+      photoBorderColor,
+      photoBorderWidth: photoBorderColor === 'transparent' ? 0 : photoBorderWidth,
+    }).then(data => {
+      if (!data) return
+      const img = new Image()
+      img.onload = () => { stripImgRef.current = img; redraw(strokesRef.current, stickersRef.current) }
+      img.src = data
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoBorderColor, photoBorderWidth])
 
 
   // ── Pointer helpers ──
@@ -1509,6 +1528,81 @@ export default function ResultView() {
           </div>
 
 
+
+          {/* Photo border picker */}
+          <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
+            <button
+              onClick={() => setShowBorderPanel(v => !v)}
+              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-white/50 font-bold tracking-wider uppercase">Photo Border</span>
+                {photoBorderColor !== 'transparent' && (
+                  <div className="w-4 h-4 rounded border-2 border-white/30 shrink-0" style={{ background: photoBorderColor }} />
+                )}
+              </div>
+              <span className="text-white/30 text-xs">{showBorderPanel ? '▲' : '▼'}</span>
+            </button>
+
+            {showBorderPanel && (
+              <div className="px-3 pb-3 space-y-3 border-t border-white/8 pt-3">
+                <button
+                  onClick={() => { setPhotoBorderColor('transparent'); setBorderHexInput('') }}
+                  className={`w-full py-1.5 rounded-xl text-[10px] font-semibold transition-all border ${photoBorderColor === 'transparent' ? 'border-primary text-primary bg-primary/10' : 'border-white/15 text-white/40 hover:text-white/70'}`}
+                >
+                  No border
+                </button>
+
+                {photoBorderColor !== 'transparent' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-[9px] text-white/25 uppercase tracking-widest">Thickness</p>
+                      <span className="text-[9px] text-white/40 font-mono">{photoBorderWidth}px</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="16" step="1"
+                      value={photoBorderWidth}
+                      onChange={e => setPhotoBorderWidth(Number(e.target.value))}
+                      className="w-full h-1 appearance-none rounded-full cursor-pointer"
+                      style={{ background: `linear-gradient(to right, oklch(0.65 0.22 350) ${((photoBorderWidth-1)/15)*100}%, rgba(255,255,255,0.12) ${((photoBorderWidth-1)/15)*100}%)` }}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Colour</p>
+                  <div className="grid grid-cols-8 gap-1.5">
+                    {['#ffffff','#f8f6f3','#000000','#1a1a1a','#ff6b9d','#ec4899','#f43f5e','#ef4444','#f97316','#f59e0b','#fde68a','#d1fae5','#10b981','#06b6d4','#3b82f6','#6366f1','#8b5cf6','#a855f7','#fda4af','#bfdbfe','#d4a017','#c084fc','#34d399','#f472b6','#0f172a','#1e293b','#374151','#6b7280','#e9d5ff','#fed7aa','#fef08a','#fca5a5'].map(col => (
+                      <button
+                        key={col}
+                        onClick={() => { setPhotoBorderColor(col); setBorderHexInput(col) }}
+                        title={col}
+                        className={`aspect-square rounded-md transition-all hover:scale-110 active:scale-90 ${photoBorderColor === col ? 'ring-2 ring-primary ring-offset-1 ring-offset-black scale-110' : 'ring-1 ring-white/10 hover:ring-white/30'}`}
+                        style={{ background: col }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2 items-center">
+                  <label className="relative shrink-0 cursor-pointer">
+                    <div className="w-9 h-9 rounded-xl border border-white/20 hover:border-primary/60 transition-colors" style={{ background: photoBorderColor === 'transparent' ? '#333' : photoBorderColor }} />
+                    <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                      value={borderHexInput.match(/^#[0-9a-f]{6}$/i) ? borderHexInput : '#ff6b9d'}
+                      onChange={e => { setBorderHexInput(e.target.value); setPhotoBorderColor(e.target.value) }} />
+                  </label>
+                  <input
+                    type="text" value={borderHexInput}
+                    onChange={e => setBorderHexInput(e.target.value)}
+                    onBlur={() => { if (borderHexInput.trim()) setPhotoBorderColor(borderHexInput.trim()) }}
+                    onKeyDown={e => e.key === 'Enter' && borderHexInput.trim() && setPhotoBorderColor(borderHexInput.trim())}
+                    placeholder="#hex or rgb() or hsl()"
+                    className="flex-1 bg-white/6 border border-white/10 focus:border-primary/50 rounded-xl px-3 py-2 text-[11px] text-white placeholder:text-white/20 outline-none font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Room code */}
           <div className="bg-white/5 rounded-2xl p-3 border border-white/10 text-center">

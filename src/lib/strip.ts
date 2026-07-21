@@ -7,6 +7,8 @@ export interface StripOptions {
   caption?: string
   isCreator?: boolean
   frameId?: string
+  photoBorderColor?: string   // e.g. '#ff6b9d' or 'transparent'
+  photoBorderWidth?: number   // px, default 0
 }
 
 const PAD = 32   // generous horizontal mat margin
@@ -39,6 +41,21 @@ function roundRect(
   ctx.lineTo(x, y + r)
   ctx.quadraticCurveTo(x, y, x + r, y)
   ctx.closePath()
+}
+
+// Draw a coloured border around a photo slot
+function drawPhotoBorder(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  color: string, bw: number, radius = 2,
+) {
+  if (!color || color === 'transparent' || bw <= 0) return
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.lineWidth   = bw * 2  // *2 because half is clipped inside photo
+  roundRect(ctx, x, y, w, h, radius)
+  ctx.stroke()
+  ctx.restore()
 }
 
 // ─── Premium strip footer ─────────────────────────────────────────────────────
@@ -118,10 +135,13 @@ async function renderClassic(
       ctx.fillRect(PAD, y - photoGap, PHOTO_W, 6)
     }
     ctx.save()
-    roundRect(ctx, PAD, y, PHOTO_W, h, 2)   // minimal corner radius
+    roundRect(ctx, PAD, y, PHOTO_W, h, 2)
     ctx.clip()
     ctx.drawImage(img, PAD, y, PHOTO_W, h)
     ctx.restore()
+    // Photo border overlay
+    const bc = opts.photoBorderColor; const bw = opts.photoBorderWidth ?? 0
+    if (bc && bc !== 'transparent' && bw > 0) drawPhotoBorder(ctx, PAD, y, PHOTO_W, h, bc, bw, 2)
     y += h + photoGap
   })
 
@@ -160,6 +180,7 @@ async function renderMagazine(
   ctx.clip()
   ctx.drawImage(imgs[0], heroX, heroY, heroW, heroH)
   ctx.restore()
+  drawPhotoBorder(ctx, heroX, heroY, heroW, heroH, opts.photoBorderColor ?? '', opts.photoBorderWidth ?? 0, CORNER)
 
   const rightX = heroX + heroW + GAP
   rightPhotos.forEach((_, i) => {
@@ -170,6 +191,7 @@ async function renderMagazine(
     // imgs[i+1] matches rightPhotos index correctly
     if (imgs[i + 1]) ctx.drawImage(imgs[i + 1], rightX, ry, colW, rightH)
     ctx.restore()
+    drawPhotoBorder(ctx, rightX, ry, colW, rightH, opts.photoBorderColor ?? '', opts.photoBorderWidth ?? 0, CORNER)
   })
 
   drawPremiumFooter(ctx, W, totalH)
@@ -225,6 +247,7 @@ async function renderCouple(
       ctx.clip()
       ctx.drawImage(imgs[leftIdx], PAD, y, colW, rowH)
       ctx.restore()
+      drawPhotoBorder(ctx, PAD, y, colW, rowH, opts.photoBorderColor ?? '', opts.photoBorderWidth ?? 0, CORNER)
     }
     if (imgs[rightIdx]) {
       ctx.save()
@@ -232,6 +255,7 @@ async function renderCouple(
       ctx.clip()
       ctx.drawImage(imgs[rightIdx], PAD + colW + GAP, y, colW, rowH)
       ctx.restore()
+      drawPhotoBorder(ctx, PAD + colW + GAP, y, colW, rowH, opts.photoBorderColor ?? '', opts.photoBorderWidth ?? 0, CORNER)
     }
 
     // Divider heart between cols
