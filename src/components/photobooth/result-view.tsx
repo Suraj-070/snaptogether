@@ -627,7 +627,7 @@ export default function ResultView() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full px-3 py-4 flex flex-col lg:flex-row gap-4">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-3 py-4 flex flex-col lg:flex-row gap-5">
 
         {/* ── LEFT: Sticker panel (on desktop) / top (on mobile) ── */}
         <div className="lg:w-72 flex flex-col gap-3 order-2 lg:order-1">
@@ -988,11 +988,11 @@ export default function ResultView() {
         </div>
 
         {/* ── CENTER: Strip canvas ── */}
-        <div className="flex-1 flex flex-col items-center gap-4 order-1 lg:order-2">
+        <div className="flex-1 min-w-0 flex flex-col items-center gap-4 order-1 lg:order-2">
           {/* Strip frame — constrained height so all 4 photos visible */}
           <div
             ref={containerRef}
-            className="relative w-full max-w-sm lg:max-w-xs xl:max-w-sm select-none mx-auto"
+            className="relative w-full max-w-md lg:max-w-md xl:max-w-lg select-none mx-auto"
             style={{ cursor: tool === 'erase' ? 'none' : tool === 'draw' ? 'crosshair' : 'default' }}
             onMouseMove={e => {
               const rect = e.currentTarget.getBoundingClientRect()

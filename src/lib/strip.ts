@@ -11,7 +11,7 @@ export interface StripOptions {
 
 const PAD = 32   // generous horizontal mat margin
 const GAP = 10
-const PHOTO_W = 400
+const PHOTO_W = 560   // wider photos for better clarity
 const FOOTER_H = 34   // premium footer height
 const CORNER = 8
 
