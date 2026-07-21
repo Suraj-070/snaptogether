@@ -172,32 +172,59 @@ export default function ResultView() {
     ctx.restore()
   }
 
+  // Resolve a CSS colour/gradient string to a canvas fillStyle
+  const resolveCanvasFill = (ctx: CanvasRenderingContext2D, bg: string, w: number, h: number): string | CanvasGradient => {
+    if (bg.startsWith('linear-gradient')) {
+      const match = bg.match(/linear-gradient\(([^,]+),\s*([^,]+),\s*([^)]+)\)/)
+      if (match) {
+        const grad = ctx.createLinearGradient(0, 0, w, h)
+        try { grad.addColorStop(0, match[2].trim()); grad.addColorStop(1, match[3].trim()); return grad } catch {}
+      }
+      return '#888'
+    }
+    return bg
+  }
+
+  // Draw bg + strip + overlay composited with mat border effect
+  const compositeWithBg = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, img: HTMLImageElement) => {
+    const bg = stripBgRef.current
+    const MAT = bg && bg !== 'transparent' ? 28 : 0  // mat border size when bg set
+
+    canvas.width  = img.naturalWidth  + MAT * 2
+    canvas.height = img.naturalHeight + MAT * 2
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    if (bg && bg !== 'transparent') {
+      ctx.fillStyle = resolveCanvasFill(ctx, bg, canvas.width, canvas.height)
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      // Subtle shadow under strip
+      ctx.shadowColor = 'rgba(0,0,0,0.18)'
+      ctx.shadowBlur  = 16
+      ctx.shadowOffsetY = 4
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(MAT, MAT, img.naturalWidth, img.naturalHeight)
+      ctx.shadowColor = 'transparent'
+      ctx.shadowBlur  = 0
+      ctx.shadowOffsetY = 0
+    }
+
+    ctx.drawImage(img, MAT, MAT)
+
+    if (overlayCanvasRef.current && MAT === 0) {
+      ctx.drawImage(overlayCanvasRef.current, 0, 0)
+    } else if (overlayCanvasRef.current && MAT > 0) {
+      ctx.drawImage(overlayCanvasRef.current, MAT, MAT)
+    }
+  }
+
   // Composite: bg colour → strip → overlay → stickers onto display canvas
   const composite = () => {
     const canvas = drawCanvasRef.current
     const img    = stripImgRef.current
     if (!canvas || !img) return
     const ctx = canvas.getContext('2d')!
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    // Background colour layer (below strip)
-    const bg = stripBgRef.current
-    if (bg && bg !== 'transparent') {
-      if (bg.startsWith('linear-gradient')) {
-        // Parse linear-gradient for canvas
-        const match = bg.match(/linear-gradient\(([^,]+),\s*([^,]+),\s*([^)]+)\)/)
-        if (match) {
-          const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
-          try { grad.addColorStop(0, match[2].trim()); grad.addColorStop(1, match[3].trim()); ctx.fillStyle = grad } catch { ctx.fillStyle = match[2].trim() }
-        }
-      } else {
-        ctx.fillStyle = bg
-      }
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-    }
-    ctx.drawImage(img, 0, 0)
-    if (overlayCanvasRef.current) {
-      ctx.drawImage(overlayCanvasRef.current, 0, 0)
-    }
+    compositeWithBg(ctx, canvas, img)
   }
 
   // ── Redraw canvas ──
@@ -229,16 +256,9 @@ export default function ResultView() {
       paintStroke(octx, pts, `hsl(${hue},80%,55%)`, 2, oc.width, oc.height)
     })
 
-    // Composite onto display
+    // Composite onto display via compositeWithBg (handles bg colour + mat)
     const ctx = canvas.getContext('2d')!
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    const bg = stripBgRef.current
-    if (bg && bg !== 'transparent') {
-      ctx.fillStyle = bg
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-    }
-    ctx.drawImage(img, 0, 0)
-    ctx.drawImage(oc, 0, 0)
+    compositeWithBg(ctx, canvas, img)
 
     activeStickers.forEach(s => {
       const px = s.x * canvas.width
@@ -1153,130 +1173,137 @@ export default function ResultView() {
             </button>
           </div>
 
-          {/* Background colour picker */}
-          <div className="bg-white/5 rounded-2xl p-3 border border-white/10">
+          {/* Background colour picker — premium */}
+          <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
+            {/* Header */}
             <button
               onClick={() => setShowBgPanel(v => !v)}
-              className="w-full flex items-center justify-between"
+              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition-colors"
             >
-              <p className="text-[10px] text-white/50 font-semibold tracking-wider uppercase">Background</p>
               <div className="flex items-center gap-2">
+                <span className="text-[10px] text-white/50 font-bold tracking-wider uppercase">Background Mat</span>
                 {stripBg !== 'transparent' && (
-                  <div className="w-4 h-4 rounded-full border border-white/20 shrink-0" style={{ background: stripBg }} />
+                  <div
+                    className="w-4 h-4 rounded-full border border-white/30 shadow-sm"
+                    style={{ background: stripBg }}
+                  />
                 )}
-                <span className="text-[10px] text-white/30">{showBgPanel ? '▲' : '▼'}</span>
               </div>
+              <span className="text-white/30 text-xs">{showBgPanel ? '▲' : '▼'}</span>
             </button>
 
             {showBgPanel && (
-              <div className="mt-3 space-y-3">
-                {/* Preset swatches */}
+              <div className="px-3 pb-3 space-y-3 border-t border-white/8 pt-3">
+
+                {/* None option */}
+                <button
+                  onClick={() => { setStripBg('transparent'); setBgHexInput('') }}
+                  className={`w-full py-1.5 rounded-xl text-[10px] font-semibold transition-all border ${
+                    stripBg === 'transparent'
+                      ? 'border-primary text-primary bg-primary/10'
+                      : 'border-white/15 text-white/40 hover:text-white/70 hover:border-white/30'
+                  }`}
+                >
+                  ✕ No background
+                </button>
+
+                {/* Solid colours */}
                 <div>
-                  <p className="text-[9px] text-white/30 uppercase tracking-wider mb-1.5">Presets</p>
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {/* Transparent */}
-                    <button
-                      onClick={() => setStripBg('transparent')}
-                      title="Transparent"
-                      className={`w-full aspect-square rounded-lg border-2 transition-all ${stripBg === 'transparent' ? 'border-primary scale-110' : 'border-white/20 hover:border-white/40'}`}
-                      style={{ background: 'linear-gradient(45deg, #555 25%, transparent 25%, transparent 75%, #555 75%), linear-gradient(45deg, #555 25%, #333 25%, #333 75%, #555 75%)', backgroundSize: '8px 8px', backgroundPosition: '0 0, 4px 4px' }}
-                    />
+                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Solid</p>
+                  <div className="grid grid-cols-8 gap-1.5">
                     {[
-                      '#ffffff','#000000','#1a1a1a','#faf8f5','#fff0f5',
-                      '#f0fff4','#eff6ff','#fefce8','#fdf4ff',
-                      '#fee2e2','#fde68a','#d1fae5','#bfdbfe','#e9d5ff',
-                      '#f43f5e','#ec4899','#a855f7','#6366f1','#3b82f6',
-                      '#06b6d4','#10b981','#f59e0b','#ef4444','#8b5cf6',
-                      '#0f172a','#1e293b','#374151','#6b7280','#d1d5db',
+                      // neutrals
+                      '#ffffff','#f8f6f3','#f0ece6','#e8e4de',
+                      '#d4cec8','#1a1a1a','#0f0f0f','#000000',
+                      // pastels
+                      '#fff0f5','#ffe4ef','#fce7f3','#fdf2f8',
+                      '#f5f3ff','#ede9fe','#e0e7ff','#dbeafe',
+                      // muted
+                      '#fef3c7','#d1fae5','#cffafe','#f0fdf4',
+                      // vivid
+                      '#ff6b9d','#ec4899','#f43f5e','#ef4444',
+                      '#f97316','#f59e0b','#10b981','#06b6d4',
+                      '#3b82f6','#6366f1','#8b5cf6','#a855f7',
+                      '#0f172a','#1e293b','#374151','#6b7280',
                     ].map(col => (
                       <button
                         key={col}
                         onClick={() => { setStripBg(col); setBgHexInput(col) }}
                         title={col}
-                        className={`w-full aspect-square rounded-lg border-2 transition-all hover:scale-110 active:scale-95 ${stripBg === col ? 'border-primary scale-110 shadow-lg' : 'border-white/15 hover:border-white/40'}`}
+                        className={`aspect-square rounded-md transition-all hover:scale-110 active:scale-90 ${
+                          stripBg === col
+                            ? 'ring-2 ring-primary ring-offset-1 ring-offset-black scale-110'
+                            : 'ring-1 ring-white/10 hover:ring-white/30'
+                        }`}
                         style={{ background: col }}
                       />
                     ))}
                   </div>
                 </div>
 
-                {/* Gradient presets */}
+                {/* Gradients */}
                 <div>
-                  <p className="text-[9px] text-white/30 uppercase tracking-wider mb-1.5">Gradients</p>
-                  <div className="grid grid-cols-4 gap-1.5">
+                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Gradient</p>
+                  <div className="grid grid-cols-2 gap-1.5">
                     {[
-                      { label: 'Sunset',   val: 'linear-gradient(135deg, #f43f5e, #f97316)' },
-                      { label: 'Ocean',    val: 'linear-gradient(135deg, #06b6d4, #6366f1)' },
-                      { label: 'Forest',   val: 'linear-gradient(135deg, #10b981, #065f46)' },
-                      { label: 'Lavender', val: 'linear-gradient(135deg, #e9d5ff, #c4b5fd)' },
-                      { label: 'Rose',     val: 'linear-gradient(135deg, #fda4af, #fb7185)' },
-                      { label: 'Mint',     val: 'linear-gradient(135deg, #d1fae5, #6ee7b7)' },
-                      { label: 'Peach',    val: 'linear-gradient(135deg, #fde68a, #fca5a5)' },
-                      { label: 'Night',    val: 'linear-gradient(135deg, #0f172a, #1e1b4b)' },
+                      { label: 'Sunset',      val: 'linear-gradient(135deg, #f43f5e, #f97316)' },
+                      { label: 'Ocean',       val: 'linear-gradient(135deg, #06b6d4, #6366f1)' },
+                      { label: 'Aurora',      val: 'linear-gradient(135deg, #10b981, #6366f1)' },
+                      { label: 'Rose Quartz', val: 'linear-gradient(135deg, #fda4af, #c4b5fd)' },
+                      { label: 'Golden Hour', val: 'linear-gradient(135deg, #fbbf24, #f97316)' },
+                      { label: 'Lavender',    val: 'linear-gradient(135deg, #e9d5ff, #6366f1)' },
+                      { label: 'Mint Fresh',  val: 'linear-gradient(135deg, #d1fae5, #06b6d4)' },
+                      { label: 'Midnight',    val: 'linear-gradient(135deg, #0f172a, #4c1d95)' },
+                      { label: 'Peach Fuzz',  val: 'linear-gradient(135deg, #fde68a, #fca5a5)' },
+                      { label: 'Cherry',      val: 'linear-gradient(135deg, #be123c, #f43f5e)' },
+                      { label: 'Sky',         val: 'linear-gradient(135deg, #bae6fd, #e0e7ff)' },
+                      { label: 'Forest',      val: 'linear-gradient(135deg, #052e16, #14532d)' },
                     ].map(g => (
                       <button
                         key={g.val}
                         onClick={() => setStripBg(g.val)}
-                        title={g.label}
-                        className={`h-8 rounded-lg border-2 transition-all hover:scale-105 active:scale-95 text-[8px] font-medium text-white/80 ${stripBg === g.val ? 'border-primary scale-105' : 'border-white/15 hover:border-white/40'}`}
+                        className={`h-9 rounded-xl transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center text-[9px] font-semibold text-white/90 drop-shadow-sm ${
+                          stripBg === g.val ? 'ring-2 ring-primary ring-offset-1 ring-offset-black' : 'ring-1 ring-white/10'
+                        }`}
                         style={{ background: g.val }}
                       >
-                        {g.label}
+                        <span className="drop-shadow">{g.label}</span>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Hex / any CSS colour input */}
+                {/* Custom input */}
                 <div>
-                  <p className="text-[9px] text-white/30 uppercase tracking-wider mb-1.5">Custom — hex, rgb, hsl</p>
-                  <div className="flex gap-2">
-                    {/* Native colour picker */}
-                    <label className="relative cursor-pointer shrink-0">
+                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Custom colour</p>
+                  <div className="flex gap-2 items-center">
+                    <label className="relative shrink-0 cursor-pointer">
                       <div
-                        className="w-9 h-9 rounded-xl border-2 border-white/20 overflow-hidden hover:border-white/50 transition-colors"
-                        style={{ background: stripBg.startsWith('linear') ? '#888' : stripBg }}
+                        className="w-9 h-9 rounded-xl border border-white/20 overflow-hidden hover:border-primary/60 transition-colors"
+                        style={{ background: stripBg.startsWith('linear') ? 'conic-gradient(red,yellow,lime,cyan,blue,magenta,red)' : (stripBg === 'transparent' ? '#333' : stripBg) }}
                       />
                       <input
                         type="color"
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                        value={bgHexInput.startsWith('#') && bgHexInput.length === 7 ? bgHexInput : '#ffffff'}
+                        className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                        value={bgHexInput.match(/^#[0-9a-f]{6}$/i) ? bgHexInput : '#ff6b9d'}
                         onChange={e => { setBgHexInput(e.target.value); setStripBg(e.target.value) }}
                       />
                     </label>
-                    {/* Text input — accepts any CSS value */}
                     <input
                       type="text"
                       value={bgHexInput}
                       onChange={e => setBgHexInput(e.target.value)}
-                      onBlur={e => {
-                        const v = e.target.value.trim()
-                        if (v) setStripBg(v)
-                      }}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          const v = bgHexInput.trim()
-                          if (v) setStripBg(v)
-                        }
-                      }}
-                      placeholder="#hex · rgb() · hsl()"
-                      className="flex-1 bg-white/8 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/25 outline-none focus:bg-white/14 border border-white/10 focus:border-primary/40 transition-colors font-mono"
+                      onBlur={() => { if (bgHexInput.trim()) setStripBg(bgHexInput.trim()) }}
+                      onKeyDown={e => e.key === 'Enter' && bgHexInput.trim() && setStripBg(bgHexInput.trim())}
+                      placeholder="#hex  or  rgb()  or  hsl()"
+                      className="flex-1 bg-white/6 border border-white/10 focus:border-primary/50 rounded-xl px-3 py-2 text-[11px] text-white placeholder:text-white/20 outline-none transition-colors font-mono"
                     />
                   </div>
-                  <p className="text-[8px] text-white/20 mt-1">
-                    e.g. #ff6b9d · rgb(255,107,157) · hsl(330,100%,71%)
+                  <p className="text-[8px] text-white/15 mt-1.5 leading-relaxed">
+                    Accepts any CSS colour — hex, rgb(), hsl(), oklch(), named colours
                   </p>
                 </div>
 
-                {/* Clear bg */}
-                {stripBg !== 'transparent' && (
-                  <button
-                    onClick={() => { setStripBg('transparent'); setBgHexInput('') }}
-                    className="w-full py-1.5 rounded-xl text-[10px] text-white/40 hover:text-white/70 hover:bg-white/8 transition-colors border border-white/10"
-                  >
-                    ✕ Remove background
-                  </button>
-                )}
               </div>
             )}
           </div>
