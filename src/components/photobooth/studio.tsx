@@ -443,54 +443,48 @@ export default function StudioView() {
     const filterCssValue = getFilterCss(selectedFilter) || 'none'
 
     if (hasRemote) {
-      const h = Math.min(video.videoHeight, remote!.videoHeight) || 720
-      const wMe = Math.round(h * (video.videoWidth / video.videoHeight))
-      const wPartner = Math.round(h * (remote!.videoWidth / remote!.videoHeight))
+      // Each person's half is displayed in the viewport.
+      // Viewport is aspect-[2/1] (each half = 1:1 square) on desktop.
+      // We capture each person at 1:1 to match what object-cover shows in each half.
+      const HALF_ASPECT = 1.0   // each half of a 2:1 viewport = 1:1 square
+      const OUT_HALF = 640      // output size per person
 
-      // Canonical layout: creator ALWAYS on left, partner ALWAYS on right.
-      // This ensures both users produce an identical strip image.
-      const wL = isCreator ? wMe : wPartner
-      const wR = isCreator ? wPartner : wMe
-      canvas.width = wL + wR
-      canvas.height = h
+      canvas.width  = OUT_HALF * 2
+      canvas.height = OUT_HALF
 
-      ctx.filter = filterCssValue
-
-      // Helper: draw video center-cropped into a destination rect (matches object-cover)
-      const drawCoverCrop = (
-        src: HTMLVideoElement,
-        dx: number, dy: number, dw: number, dh: number,
-        flip = false,
-      ) => {
+      // Crop each video to 1:1 square matching each half of the 2:1 viewport
+      const cropHalf = (src: HTMLVideoElement, dx: number, flip = false) => {
         const svw = src.videoWidth  || 640
         const svh = src.videoHeight || 480
-        // Use destination aspect ratio as the target crop
-        const dAspect = dw / dh
+        // Target: 1:1 square (each half of 2:1 viewport)
+        const dAspect = 1.0
         const sAspect = svw / svh
         let sx = 0, sy = 0, sw = svw, sh = svh
         if (sAspect > dAspect) { sw = Math.round(svh * dAspect); sx = Math.round((svw - sw) / 2) }
         else                   { sh = Math.round(svw / dAspect); sy = Math.round((svh - sh) / 2) }
         ctx.save()
+        ctx.filter = filterCssValue
         if (flip) {
-          ctx.translate(dx + dw, 0); ctx.scale(-1, 1)
-          ctx.drawImage(src, sx, sy, sw, sh, -(dx + dw) + dx, dy, dw, dh)
+          ctx.translate(dx + OUT_HALF, 0); ctx.scale(-1, 1)
+          ctx.drawImage(src, sx, sy, sw, sh, -OUT_HALF, 0, OUT_HALF, OUT_HALF)
         } else {
-          ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh)
+          ctx.drawImage(src, sx, sy, sw, sh, dx, 0, OUT_HALF, OUT_HALF)
         }
         ctx.restore()
       }
 
       if (isCreator) {
-        drawCoverCrop(video,   0,  0, wL, h, mirrored)
-        drawCoverCrop(remote!, wL, 0, wR, h, false)
+        cropHalf(video,   0,        mirrored)
+        cropHalf(remote!, OUT_HALF, false)
       } else {
-        drawCoverCrop(remote!, 0,  0, wL, h, false)
-        drawCoverCrop(video,   wL, 0, wR, h, mirrored)
+        cropHalf(remote!, 0,        false)
+        cropHalf(video,   OUT_HALF, mirrored)
       }
 
       ctx.filter = 'none'
-      ctx.fillStyle = 'rgba(255,255,255,0.6)'
-      ctx.fillRect(wL - 1, 0, 2, h)
+      // Subtle divider line between the two people
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillRect(OUT_HALF - 1, 0, 2, OUT_HALF)
     } else {
       // Match EXACTLY what object-cover shows by reading the video element's
       // rendered dimensions — this is the only reliable way to get the same crop
