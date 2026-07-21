@@ -299,7 +299,26 @@ export default function ResultView() {
   }, [])
 
   // Keep bg ref in sync so composite() always reads latest without stale closure
-  useEffect(() => { stripBgRef.current = stripBg; redraw(strokes, stickers) }, [stripBg, strokes, stickers, redraw])
+  useEffect(() => {
+    stripBgRef.current = stripBg
+    // If bg is a solid colour (not gradient), also re-render strip with it as paper colour
+    if (stripBg && !stripBg.startsWith('linear') && stripBg !== 'transparent' && chosenPhotos.length) {
+      renderStrip(chosenPhotos, {
+        stripBgColor: stripBg,
+        photoBorderColor,
+        photoBorderWidth: photoBorderColor === 'transparent' ? 0 : photoBorderWidth,
+      }).then(data => {
+        if (!data) { redraw(strokes, stickers); return }
+        const img = new Image()
+        img.onload = () => { stripImgRef.current = img; redraw(strokesRef.current, stickersRef.current) }
+        img.src = data
+      })
+    } else {
+      redraw(strokes, stickers)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stripBg])
+  useEffect(() => { redraw(strokes, stickers) }, [strokes, stickers, redraw])
 
   // ── Load strip image (after redraw is defined) ──
   useEffect(() => {
@@ -315,6 +334,7 @@ export default function ResultView() {
     renderStrip(chosenPhotos, {
       photoBorderColor,
       photoBorderWidth: photoBorderColor === 'transparent' ? 0 : photoBorderWidth,
+      stripBgColor: stripBg !== 'transparent' ? undefined : undefined, // strip uses its own bg
     }).then(data => {
       if (!data) return
       const img = new Image()
@@ -1378,7 +1398,7 @@ export default function ResultView() {
             {/* Tabs */}
             <div className="flex border-b border-white/10">
               {([
-                { id: 'bg',     label: 'Background', icon: '🎨' },
+                { id: 'bg',     label: 'Paper Colour', icon: '🎨' },
                 { id: 'border', label: 'Photo Border', icon: '⬜' },
               ] as const).map(tab => (
                 <button

@@ -7,8 +7,9 @@ export interface StripOptions {
   caption?: string
   isCreator?: boolean
   frameId?: string
-  photoBorderColor?: string   // e.g. '#ff6b9d' or 'transparent'
-  photoBorderWidth?: number   // px, default 0
+  photoBorderColor?: string
+  photoBorderWidth?: number
+  stripBgColor?: string      // paper/mat colour behind photos, default cream
 }
 
 const PAD = 32   // generous horizontal mat margin
@@ -105,21 +106,20 @@ async function renderClassic(
   opts: StripOptions,
 ): Promise<string | null> {
   const { caption = '' } = opts
+  const BG = opts.stripBgColor || '#faf8f5'
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')!
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
   const heights = imgs.map(img => Math.round(PHOTO_W * (img.naturalHeight / img.naturalWidth)))
 
-  // Premium layout: no top header, photos with tight gaps, clean footer
-  const topPad   = PAD         // minimal top breathing room
-  const photoGap = 12          // comfortable vertical gap between photos
+  const topPad   = PAD
+  const photoGap = 12
   const totalPhotoH = heights.reduce((a, b) => a + b, 0) + photoGap * (imgs.length - 1)
 
   canvas.width  = PHOTO_W + PAD * 2
   canvas.height = topPad + totalPhotoH + FOOTER_H
 
-  // Warm cream background — feels like premium photo paper
-  ctx.fillStyle = '#faf8f5'
+  ctx.fillStyle = BG
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
   // Draw photos — no rounded corners, edge-to-edge strip feel
@@ -168,8 +168,8 @@ async function renderMagazine(
   const rightH = Math.round((heroH - GAP * (rightPhotos.length - 1)) / rightPhotos.length)
   const totalH = PAD + heroH + FOOTER_H
   canvas.width = W; canvas.height = totalH
-
-  ctx.fillStyle = '#faf8f5'
+  const BG = opts.stripBgColor || '#faf8f5'
+  ctx.fillStyle = BG
   ctx.fillRect(0, 0, W, totalH)
 
   const imgs = await Promise.all(photos.map(p => loadImage(p.dataUrl)))
@@ -219,9 +219,8 @@ async function renderCouple(
   const H = PAD + rows * rowH + (rows - 1) * GAP + FOOTER_H
 
   canvas.width = W; canvas.height = H
-
-  // Warm cream background
-  ctx.fillStyle = '#faf8f5'
+  const BG = opts.stripBgColor || '#faf8f5'
+  ctx.fillStyle = BG
   ctx.fillRect(0, 0, W, H)
 
   // Subtle column name labels — minimal
@@ -284,9 +283,8 @@ async function renderMemory(
   const H = PAD + CARD_PAD + photoH + (captionH || 0) + FOOTER_H
 
   canvas.width = W; canvas.height = H
-
-  // Warm cream paper
-  ctx.fillStyle = '#faf8f5'
+  const BG = opts.stripBgColor || '#faf8f5'
+  ctx.fillStyle = BG
   ctx.fillRect(0, 0, W, H)
 
   // Main photo (only first)
