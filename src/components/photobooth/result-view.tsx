@@ -275,12 +275,17 @@ export default function ResultView() {
         const cachedImg = stickerImageCache.current.get(s.id)
           || [...stickerImageCache.current.values()].find(i => i.src === s.emoji)
         if (cachedImg && cachedImg.complete) {
-          const baseSize = 130 * s.scale * (canvas.width / 448)
+          // Match the pixel size: base=80px at canvas display width, scale by s.scale
+          const containerW = containerRef.current?.getBoundingClientRect().width || 400
+          const canvasScale = canvas.width / containerW
+          const baseSize = 80 * s.scale * canvasScale
           const aspect = cachedImg.naturalHeight / cachedImg.naturalWidth
           ctx.drawImage(cachedImg, -baseSize / 2, -(baseSize * aspect) / 2, baseSize, baseSize * aspect)
         }
       } else {
-        const size = 64 * s.scale * (canvas.width / 448)
+        const containerW = containerRef.current?.getBoundingClientRect().width || 400
+        const canvasScale = canvas.width / containerW
+        const size = 80 * s.scale * canvasScale * 0.7
         ctx.font = `${size}px serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
@@ -1128,7 +1133,7 @@ export default function ResultView() {
                   style={{
                     left: `${s.x * 100}%`,
                     top:  `${s.y * 100}%`,
-                    transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${s.flipX ? -s.scale : s.scale}, ${s.scale})`,
+                    transform: `translate(-50%, -50%) rotate(${rot}deg) scaleX(${s.flipX ? -1 : 1})`,
                     touchAction: 'none',
                     cursor: draggingSticker === s.id ? 'grabbing' : 'grab',
                     zIndex: isSelected ? 20 : 10,
@@ -1157,12 +1162,24 @@ export default function ResultView() {
                   }}
                   onTouchEnd={() => { pinchRef.current = null }}
                 >
-                  {/* Sticker image */}
-                  {isUrl ? (
-                    <img src={s.emoji} alt="sticker" className="w-14 h-14 object-contain pointer-events-none drop-shadow-lg" draggable={false} />
-                  ) : (
-                    <span className="text-4xl drop-shadow-lg pointer-events-none" style={{ lineHeight: 1 }}>{s.emoji}</span>
-                  )}
+                  {/* Sticker image — size driven by scale directly, no CSS scale transform */}
+                  {(() => {
+                    const px = Math.round(80 * s.scale)
+                    return isUrl ? (
+                      <img
+                        src={s.emoji}
+                        alt="sticker"
+                        style={{ width: px, height: px, objectFit: 'contain', display: 'block' }}
+                        className="pointer-events-none drop-shadow-lg"
+                        draggable={false}
+                      />
+                    ) : (
+                      <span
+                        className="drop-shadow-lg pointer-events-none block text-center"
+                        style={{ fontSize: px * 0.7, lineHeight: 1, width: px, height: px, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >{s.emoji}</span>
+                    )
+                  })()}
 
                   {/* Selection border + handles */}
                   {isSelected && (
@@ -1203,20 +1220,24 @@ export default function ResultView() {
                             resizeRef.current = { startX, startY, startScale }
                             ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
 
-                            const onMove = (ev: PointerEvent) => {
+                            const sid = s.id
+                          const onMove = (ev: PointerEvent) => {
                               if (!resizeRef.current) return
                               const dx = ev.clientX - resizeRef.current.startX
                               const dy = ev.clientY - resizeRef.current.startY
-                              const dist = Math.hypot(dx * h.dx, dy * h.dy)
+                              // Use signed distance so moving toward/away scales correctly
+                              const signed = (dx * h.dx + dy * h.dy)
                               const container = containerRef.current
                               if (!container) return
                               const cw = container.getBoundingClientRect().width
-                              const delta = dist / cw * 2
-                              const next = Math.max(0.2, Math.min(4, resizeRef.current.startScale + delta))
-                              scaleSticker(s.id, next - s.scale)
+                              const next = Math.max(0.15, Math.min(5, resizeRef.current.startScale + signed / (cw * 0.4)))
+                              setStickers(prev => prev.map(st => st.id === sid ? { ...st, scale: next } : st))
                             }
                             const onUp = () => {
                               resizeRef.current = null
+                              // Sync final scale to partner
+                              const final = stickersRef.current.find(st => st.id === sid)
+                              if (final) socket.emit('strip-sticker-scale', { id: sid, scale: final.scale })
                               window.removeEventListener('pointermove', onMove)
                               window.removeEventListener('pointerup', onUp)
                             }
