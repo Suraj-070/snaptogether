@@ -95,7 +95,7 @@ async function renderClassic(
 
   // Premium layout: no top header, photos with tight gaps, clean footer
   const topPad   = PAD         // minimal top breathing room
-  const photoGap = 3           // very tight gap between photos (film-like)
+  const photoGap = 12          // comfortable vertical gap between photos
   const totalPhotoH = heights.reduce((a, b) => a + b, 0) + photoGap * (imgs.length - 1)
 
   canvas.width  = PHOTO_W + PAD * 2
