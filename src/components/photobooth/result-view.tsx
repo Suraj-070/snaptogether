@@ -58,8 +58,8 @@ const DRAW_SIZES = [3, 6, 12, 20, 32] // actual pixel sizes at 448px base
 
 export default function ResultView() {
   const {
-    finalStripData, aiCaption, roomCode, username, userId, sessionId,
-    capturedPhotos, chosenPhotos, setView, resetSession, setAiCaption,
+    finalStripData, roomCode, username, userId, sessionId,
+    capturedPhotos, chosenPhotos, setView, resetSession,
   } = useAppStore()
 
   const [tool, setTool] = useState<'sticker' | 'draw' | 'erase'>('sticker')
@@ -78,6 +78,7 @@ export default function ResultView() {
   const [photoBorderWidth, setPhotoBorderWidth] = useState<number>(3)
   const [borderHexInput, setBorderHexInput] = useState<string>('')
   const [showBorderPanel, setShowBorderPanel] = useState(false)
+  const [styleTab, setStyleTab] = useState<'bg' | 'border'>('bg')
   const { stickers: CUSTOM_STICKERS, loading: stickersLoading } = useStickers()
   const [customStickerTab, setCustomStickerTab] = useState<string>('All')
   const [stickerQuery, setStickerQuery] = useState('')
@@ -100,12 +101,10 @@ export default function ResultView() {
 
   // Strip overlay options
   const [showStripHeader, setShowStripHeader] = useState(true)
-  const [showStripCaption, setShowStripCaption] = useState(false)
 
   // Actions
   const [isSaved, setIsSaved] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [isGeneratingCaption, setIsGeneratingCaption] = useState(false)
   const [copied, setCopied] = useState(false)
 
   // Refs
@@ -635,7 +634,7 @@ export default function ResultView() {
       await fetch('/api/memories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, userId, stripData, caption: aiCaption, isFavorite: false }),
+        body: JSON.stringify({ sessionId, userId, stripData, caption: '', isFavorite: false }),
       })
       setIsSaved(true)
       toast.success('Memory saved!')
@@ -1371,75 +1370,64 @@ export default function ResultView() {
           </div>
         </div>
 
-        {/* ── RIGHT: Caption + room info ── */}
-        <div className="lg:w-56 flex flex-col gap-3 order-3">
-          {/* AI Caption */}
-          <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              <span className="text-xs font-semibold text-white/70 tracking-wider uppercase">Caption</span>
-            </div>
-            <p className="text-sm leading-snug mb-3 text-white/90">{aiCaption || 'A moment worth remembering ✨'}</p>
-            <button
-              onClick={handleNewCaption}
-              disabled={isGeneratingCaption}
-              className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/80 transition-colors"
-            >
-              {isGeneratingCaption
-                ? <Loader2 className="w-3 h-3 animate-spin" />
-                : <RotateCcw className="w-3 h-3" />}
-              New caption
-            </button>
-          </div>
+        {/* ── RIGHT: Style panel ── */}
+        <div className="lg:w-64 flex flex-col gap-3 order-3">
 
-          {/* Background colour picker — premium */}
+          {/* Tab switcher: Background / Border */}
           <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
-            {/* Header */}
-            <button
-              onClick={() => setShowBgPanel(v => !v)}
-              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-white/50 font-bold tracking-wider uppercase">Background Mat</span>
-                {stripBg !== 'transparent' && (
-                  <div
-                    className="w-4 h-4 rounded-full border border-white/30 shadow-sm"
-                    style={{ background: stripBg }}
-                  />
-                )}
-              </div>
-              <span className="text-white/30 text-xs">{showBgPanel ? '▲' : '▼'}</span>
-            </button>
-
-            {showBgPanel && (
-              <div className="px-3 pb-3 space-y-3 border-t border-white/8 pt-3">
-
-                {/* None option */}
+            {/* Tabs */}
+            <div className="flex border-b border-white/10">
+              {([
+                { id: 'bg',     label: 'Background', icon: '🎨' },
+                { id: 'border', label: 'Photo Border', icon: '⬜' },
+              ] as const).map(tab => (
                 <button
-                  onClick={() => { setStripBg('transparent'); setBgHexInput('') }}
-                  className={`w-full py-1.5 rounded-xl text-[10px] font-semibold transition-all border ${
-                    stripBg === 'transparent'
-                      ? 'border-primary text-primary bg-primary/10'
-                      : 'border-white/15 text-white/40 hover:text-white/70 hover:border-white/30'
+                  key={tab.id}
+                  onClick={() => setStyleTab(tab.id)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[11px] font-semibold tracking-wide transition-all ${
+                    styleTab === tab.id
+                      ? 'text-white border-b-2 border-primary bg-white/5'
+                      : 'text-white/35 hover:text-white/60'
                   }`}
                 >
-                  ✕ No background
+                  <span>{tab.icon}</span>
+                  <span>{tab.label}</span>
+                  {/* Active indicator dot */}
+                  {tab.id === 'bg' && stripBg !== 'transparent' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  )}
+                  {tab.id === 'border' && photoBorderColor !== 'transparent' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* ── Background tab ── */}
+            {styleTab === 'bg' && (
+              <div className="p-3 space-y-3">
+                {/* Clear */}
+                <button
+                  onClick={() => { setStripBg('transparent'); setBgHexInput('') }}
+                  className={`w-full py-2 rounded-xl text-[11px] font-semibold transition-all border ${
+                    stripBg === 'transparent'
+                      ? 'border-primary text-primary bg-primary/10'
+                      : 'border-white/12 text-white/40 hover:text-white/70 hover:border-white/25'
+                  }`}
+                >
+                  No background
                 </button>
 
-                {/* Solid colours */}
+                {/* Solid swatches */}
                 <div>
                   <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Solid</p>
                   <div className="grid grid-cols-8 gap-1.5">
                     {[
-                      // neutrals
                       '#ffffff','#f8f6f3','#f0ece6','#e8e4de',
                       '#d4cec8','#1a1a1a','#0f0f0f','#000000',
-                      // pastels
                       '#fff0f5','#ffe4ef','#fce7f3','#fdf2f8',
                       '#f5f3ff','#ede9fe','#e0e7ff','#dbeafe',
-                      // muted
                       '#fef3c7','#d1fae5','#cffafe','#f0fdf4',
-                      // vivid
                       '#ff6b9d','#ec4899','#f43f5e','#ef4444',
                       '#f97316','#f59e0b','#10b981','#06b6d4',
                       '#3b82f6','#6366f1','#8b5cf6','#a855f7',
@@ -1481,7 +1469,7 @@ export default function ResultView() {
                       <button
                         key={g.val}
                         onClick={() => setStripBg(g.val)}
-                        className={`h-9 rounded-xl transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center text-[9px] font-semibold text-white/90 drop-shadow-sm ${
+                        className={`h-9 rounded-xl transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center text-[9px] font-bold text-white/90 drop-shadow-sm ${
                           stripBg === g.val ? 'ring-2 ring-primary ring-offset-1 ring-offset-black' : 'ring-1 ring-white/10'
                         }`}
                         style={{ background: g.val }}
@@ -1492,113 +1480,116 @@ export default function ResultView() {
                   </div>
                 </div>
 
-                {/* Custom input */}
+                {/* Custom */}
                 <div>
-                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Custom colour</p>
+                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Custom</p>
                   <div className="flex gap-2 items-center">
                     <label className="relative shrink-0 cursor-pointer">
                       <div
-                        className="w-9 h-9 rounded-xl border border-white/20 overflow-hidden hover:border-primary/60 transition-colors"
+                        className="w-9 h-9 rounded-xl border border-white/20 hover:border-primary/60 transition-colors"
                         style={{ background: stripBg.startsWith('linear') ? 'conic-gradient(red,yellow,lime,cyan,blue,magenta,red)' : (stripBg === 'transparent' ? '#333' : stripBg) }}
                       />
-                      <input
-                        type="color"
-                        className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                      <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
                         value={bgHexInput.match(/^#[0-9a-f]{6}$/i) ? bgHexInput : '#ff6b9d'}
                         onChange={e => { setBgHexInput(e.target.value); setStripBg(e.target.value) }}
                       />
                     </label>
-                    <input
-                      type="text"
-                      value={bgHexInput}
+                    <input type="text" value={bgHexInput}
                       onChange={e => setBgHexInput(e.target.value)}
                       onBlur={() => { if (bgHexInput.trim()) setStripBg(bgHexInput.trim()) }}
                       onKeyDown={e => e.key === 'Enter' && bgHexInput.trim() && setStripBg(bgHexInput.trim())}
-                      placeholder="#hex  or  rgb()  or  hsl()"
-                      className="flex-1 bg-white/6 border border-white/10 focus:border-primary/50 rounded-xl px-3 py-2 text-[11px] text-white placeholder:text-white/20 outline-none transition-colors font-mono"
+                      placeholder="#hex · rgb() · hsl()"
+                      className="flex-1 bg-white/6 border border-white/10 focus:border-primary/50 rounded-xl px-3 py-2 text-[11px] text-white placeholder:text-white/15 outline-none font-mono"
                     />
                   </div>
-                  <p className="text-[8px] text-white/15 mt-1.5 leading-relaxed">
-                    Accepts any CSS colour — hex, rgb(), hsl(), oklch(), named colours
-                  </p>
                 </div>
-
               </div>
             )}
-          </div>
 
-
-
-          {/* Photo border picker */}
-          <div className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
-            <button
-              onClick={() => setShowBorderPanel(v => !v)}
-              className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-white/50 font-bold tracking-wider uppercase">Photo Border</span>
-                {photoBorderColor !== 'transparent' && (
-                  <div className="w-4 h-4 rounded border-2 border-white/30 shrink-0" style={{ background: photoBorderColor }} />
-                )}
-              </div>
-              <span className="text-white/30 text-xs">{showBorderPanel ? '▲' : '▼'}</span>
-            </button>
-
-            {showBorderPanel && (
-              <div className="px-3 pb-3 space-y-3 border-t border-white/8 pt-3">
+            {/* ── Border tab ── */}
+            {styleTab === 'border' && (
+              <div className="p-3 space-y-3">
+                {/* Clear */}
                 <button
                   onClick={() => { setPhotoBorderColor('transparent'); setBorderHexInput('') }}
-                  className={`w-full py-1.5 rounded-xl text-[10px] font-semibold transition-all border ${photoBorderColor === 'transparent' ? 'border-primary text-primary bg-primary/10' : 'border-white/15 text-white/40 hover:text-white/70'}`}
+                  className={`w-full py-2 rounded-xl text-[11px] font-semibold transition-all border ${
+                    photoBorderColor === 'transparent'
+                      ? 'border-primary text-primary bg-primary/10'
+                      : 'border-white/12 text-white/40 hover:text-white/70 hover:border-white/25'
+                  }`}
                 >
                   No border
                 </button>
 
+                {/* Thickness */}
                 {photoBorderColor !== 'transparent' && (
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center justify-between mb-2">
                       <p className="text-[9px] text-white/25 uppercase tracking-widest">Thickness</p>
-                      <span className="text-[9px] text-white/40 font-mono">{photoBorderWidth}px</span>
+                      <span className="text-[10px] text-white/50 font-mono font-semibold">{photoBorderWidth}px</span>
                     </div>
                     <input
                       type="range" min="1" max="16" step="1"
                       value={photoBorderWidth}
                       onChange={e => setPhotoBorderWidth(Number(e.target.value))}
-                      className="w-full h-1 appearance-none rounded-full cursor-pointer"
-                      style={{ background: `linear-gradient(to right, oklch(0.65 0.22 350) ${((photoBorderWidth-1)/15)*100}%, rgba(255,255,255,0.12) ${((photoBorderWidth-1)/15)*100}%)` }}
+                      className="w-full h-1.5 appearance-none rounded-full cursor-pointer"
+                      style={{ background: `linear-gradient(to right, oklch(0.65 0.22 350) ${((photoBorderWidth-1)/15)*100}%, rgba(255,255,255,0.10) ${((photoBorderWidth-1)/15)*100}%)` }}
                     />
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[8px] text-white/20">Thin</span>
+                      <span className="text-[8px] text-white/20">Thick</span>
+                    </div>
                   </div>
                 )}
 
+                {/* Colour swatches */}
                 <div>
                   <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Colour</p>
                   <div className="grid grid-cols-8 gap-1.5">
-                    {['#ffffff','#f8f6f3','#000000','#1a1a1a','#ff6b9d','#ec4899','#f43f5e','#ef4444','#f97316','#f59e0b','#fde68a','#d1fae5','#10b981','#06b6d4','#3b82f6','#6366f1','#8b5cf6','#a855f7','#fda4af','#bfdbfe','#d4a017','#c084fc','#34d399','#f472b6','#0f172a','#1e293b','#374151','#6b7280','#e9d5ff','#fed7aa','#fef08a','#fca5a5'].map(col => (
+                    {[
+                      '#ffffff','#f8f6f3','#000000','#1a1a1a',
+                      '#ff6b9d','#ec4899','#f43f5e','#ef4444',
+                      '#f97316','#f59e0b','#fde68a','#d1fae5',
+                      '#10b981','#06b6d4','#3b82f6','#6366f1',
+                      '#8b5cf6','#a855f7','#fda4af','#bfdbfe',
+                      '#d4a017','#c084fc','#34d399','#f472b6',
+                      '#0f172a','#1e293b','#374151','#6b7280',
+                      '#e9d5ff','#fed7aa','#fef08a','#fca5a5',
+                    ].map(col => (
                       <button
                         key={col}
                         onClick={() => { setPhotoBorderColor(col); setBorderHexInput(col) }}
                         title={col}
-                        className={`aspect-square rounded-md transition-all hover:scale-110 active:scale-90 ${photoBorderColor === col ? 'ring-2 ring-primary ring-offset-1 ring-offset-black scale-110' : 'ring-1 ring-white/10 hover:ring-white/30'}`}
+                        className={`aspect-square rounded-md transition-all hover:scale-110 active:scale-90 ${
+                          photoBorderColor === col
+                            ? 'ring-2 ring-primary ring-offset-1 ring-offset-black scale-110'
+                            : 'ring-1 ring-white/10 hover:ring-white/30'
+                        }`}
                         style={{ background: col }}
                       />
                     ))}
                   </div>
                 </div>
 
-                <div className="flex gap-2 items-center">
-                  <label className="relative shrink-0 cursor-pointer">
-                    <div className="w-9 h-9 rounded-xl border border-white/20 hover:border-primary/60 transition-colors" style={{ background: photoBorderColor === 'transparent' ? '#333' : photoBorderColor }} />
-                    <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-                      value={borderHexInput.match(/^#[0-9a-f]{6}$/i) ? borderHexInput : '#ff6b9d'}
-                      onChange={e => { setBorderHexInput(e.target.value); setPhotoBorderColor(e.target.value) }} />
-                  </label>
-                  <input
-                    type="text" value={borderHexInput}
-                    onChange={e => setBorderHexInput(e.target.value)}
-                    onBlur={() => { if (borderHexInput.trim()) setPhotoBorderColor(borderHexInput.trim()) }}
-                    onKeyDown={e => e.key === 'Enter' && borderHexInput.trim() && setPhotoBorderColor(borderHexInput.trim())}
-                    placeholder="#hex or rgb() or hsl()"
-                    className="flex-1 bg-white/6 border border-white/10 focus:border-primary/50 rounded-xl px-3 py-2 text-[11px] text-white placeholder:text-white/20 outline-none font-mono"
-                  />
+                {/* Custom */}
+                <div>
+                  <p className="text-[9px] text-white/25 uppercase tracking-widest mb-2">Custom</p>
+                  <div className="flex gap-2 items-center">
+                    <label className="relative shrink-0 cursor-pointer">
+                      <div className="w-9 h-9 rounded-xl border border-white/20 hover:border-primary/60 transition-colors"
+                        style={{ background: photoBorderColor === 'transparent' ? '#333' : photoBorderColor }} />
+                      <input type="color" className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                        value={borderHexInput.match(/^#[0-9a-f]{6}$/i) ? borderHexInput : '#ff6b9d'}
+                        onChange={e => { setBorderHexInput(e.target.value); setPhotoBorderColor(e.target.value) }} />
+                    </label>
+                    <input type="text" value={borderHexInput}
+                      onChange={e => setBorderHexInput(e.target.value)}
+                      onBlur={() => { if (borderHexInput.trim()) setPhotoBorderColor(borderHexInput.trim()) }}
+                      onKeyDown={e => e.key === 'Enter' && borderHexInput.trim() && setPhotoBorderColor(borderHexInput.trim())}
+                      placeholder="#hex · rgb() · hsl()"
+                      className="flex-1 bg-white/6 border border-white/10 focus:border-primary/50 rounded-xl px-3 py-2 text-[11px] text-white placeholder:text-white/15 outline-none font-mono"
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -1606,11 +1597,11 @@ export default function ResultView() {
 
           {/* Room code */}
           <div className="bg-white/5 rounded-2xl p-3 border border-white/10 text-center">
-            <p className="text-[9px] text-white/30 mb-1 tracking-widest uppercase">Room</p>
+            <p className="text-[9px] text-white/25 mb-1 tracking-widest uppercase">Room</p>
             <div className="flex items-center justify-center gap-2">
               <span className="font-mono text-base font-bold tracking-widest">{roomCode}</span>
               <button onClick={() => { navigator.clipboard.writeText(roomCode); setCopied(true); setTimeout(() => setCopied(false), 2000) }} className="p-1 rounded-lg hover:bg-white/10">
-                {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3 text-white/40" />}
+                {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-white/40" />}
               </button>
             </div>
           </div>
