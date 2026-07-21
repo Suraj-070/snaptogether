@@ -212,7 +212,7 @@ export default function LandingView() {
           </button>
           <ThemeToggle />
           <button
-            onClick={() => session ? signOut() : setView('profile')}
+            onClick={() => session ? signOut() : setView('auth')}
             className="p-2 rounded-lg text-muted-foreground hover:text-foreground/80 hover:bg-foreground/[0.06] transition-all text-xs flex items-center gap-1.5"
           >
             {session?.user?.image

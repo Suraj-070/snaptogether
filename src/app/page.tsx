@@ -14,6 +14,7 @@ import StudioView from '@/components/photobooth/studio'
 import ResultView from '@/components/photobooth/result-view'
 import GalleryView from '@/components/photobooth/gallery'
 import ProfileView from '@/components/photobooth/profile'
+import AuthView from '@/components/photobooth/auth-view'
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -115,6 +116,7 @@ export default function Home() {
         {view === 'result'       && <ResultView />}
         {view === 'gallery'      && <GalleryView />}
         {view === 'profile'      && <ProfileView />}
+        {view === 'auth'         && <AuthView />}
       </motion.div>
     </AnimatePresence>
   )

@@ -26,6 +26,7 @@ export type AppView =
   | 'result'
   | 'gallery'
   | 'profile'
+  | 'auth'
 
 export interface FilterDef {
   id: FilterId

@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSession, signOut } from 'next-auth/react'
 import { useAppStore } from '@/lib/store'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, Camera, Heart, ImageIcon, Star, Trophy,
-  Calendar, Sparkles,
+  Calendar, Sparkles, LogIn, LogOut,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -19,6 +20,7 @@ interface ProfileStats {
 
 export default function ProfileView() {
   const { username, userId, setView } = useAppStore()
+  const { data: session } = useSession()
   const [stats, setStats] = useState<ProfileStats>({
     totalSessions: 0,
     totalPhotos: 0,
@@ -64,13 +66,21 @@ export default function ProfileView() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="glass sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center">
-          <Button variant="ghost" size="sm" onClick={() => setView('landing')} className="mr-3">
+      <header className="glass sticky top-0 z-50 border-b border-border">
+        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+          <Button variant="ghost" size="sm" onClick={() => setView('landing')} className="text-muted-foreground hover:text-foreground">
             <ArrowLeft className="w-4 h-4 mr-1.5" />
             Back
           </Button>
-          <span className="font-semibold">Profile</span>
+          <span className="text-sm font-semibold tracking-[0.18em] uppercase text-muted-foreground">Profile</span>
+          {!session ? (
+            <Button variant="ghost" size="sm" onClick={() => setView('auth')} className="text-primary text-xs font-semibold">
+              <LogIn className="w-3.5 h-3.5 mr-1" />
+              Sign in
+            </Button>
+          ) : (
+            <div className="w-20" />
+          )}
         </div>
       </header>
 
@@ -88,12 +98,41 @@ export default function ProfileView() {
               transition={{ type: 'spring', stiffness: 200, delay: 0.1 }}
               className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mx-auto mb-4 ring-4 ring-primary/10"
             >
-              <span className="text-3xl font-bold gradient-text">
-                {username ? username.charAt(0).toUpperCase() : '?'}
-              </span>
+              {session?.user?.image ? (
+                <img src={session.user.image} className="w-full h-full rounded-full object-cover" alt="" />
+              ) : (
+                <span className="text-3xl font-bold gradient-text">
+                  {username ? username.charAt(0).toUpperCase() : '?'}
+                </span>
+              )}
             </motion.div>
             <h2 className="text-2xl font-bold mb-1">{username || 'Guest'}</h2>
-            <p className="text-muted-foreground text-sm">Memory Collector</p>
+            <p className="text-muted-foreground text-sm">{session ? 'Memory Collector' : 'Browsing as guest'}</p>
+
+            {/* Guest sign-in prompt */}
+            {!session && (
+              <div className="mt-4 p-3 rounded-2xl bg-primary/8 border border-primary/15">
+                <p className="text-xs text-muted-foreground mb-2">Sign in to save memories across devices</p>
+                <button
+                  onClick={() => setView('auth')}
+                  className="flex items-center gap-1.5 mx-auto px-4 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-colors"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  Sign in or create account
+                </button>
+              </div>
+            )}
+
+            {/* Sign out button for logged-in users */}
+            {session && (
+              <button
+                onClick={() => signOut()}
+                className="mt-4 flex items-center gap-1.5 mx-auto px-4 py-2 rounded-xl bg-foreground/5 text-muted-foreground text-xs font-medium hover:bg-foreground/10 hover:text-foreground transition-colors border border-border"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign out
+              </button>
+            )}
           </div>
 
           {/* Stats */}
