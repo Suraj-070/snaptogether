@@ -1,218 +1,315 @@
-'use client'
+"use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { useAppStore } from '@/lib/store'
-import { motion, AnimatePresence, Reorder } from 'framer-motion'
-import { Plus, Sparkles, ArrowLeft, X, GripVertical, LayoutGrid } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
-import { renderStrip } from '@/lib/strip'
-import { getSocket } from '@/lib/socket'
-import type { CapturedPhoto, StripLayout } from '@/lib/types'
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useAppStore } from "@/lib/store";
+import { motion, Reorder } from "framer-motion";
+import {
+  Plus,
+  Sparkles,
+  ArrowLeft,
+  X,
+  GripVertical,
+  LayoutGrid,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { renderStrip } from "@/lib/strip";
+import { getSocket } from "@/lib/socket";
+import type { CapturedPhoto, StripLayout } from "@/lib/types";
 
-const LAYOUTS: { id: StripLayout; name: string; desc: string; icon: string }[] = [
-  { id: 'classic',  name: 'Classic',  desc: 'Vertical film strip', icon: '🎞️' },
-  { id: 'magazine', name: 'Magazine', desc: 'Big hero + side shots', icon: '📰' },
-  { id: 'couple',   name: 'Couple',   desc: 'Side-by-side pairs', icon: '💕' },
-  { id: 'memory',   name: 'Memory',   desc: 'Polaroid card style', icon: '📷' },
-]
+const LAYOUTS: { id: StripLayout; name: string; desc: string; icon: string }[] =
+  [
+    { id: "classic", name: "Classic", desc: "Vertical film strip", icon: "🎞️" },
+    {
+      id: "magazine",
+      name: "Magazine",
+      desc: "Big hero + side shots",
+      icon: "📰",
+    },
+    { id: "couple", name: "Couple", desc: "Side-by-side pairs", icon: "💕" },
+    { id: "memory", name: "Memory", desc: "Polaroid card style", icon: "📷" },
+  ];
 
 const QUICK_STICKERS = [
-  '❤️','💕','✨','🎉','😍','🥰','😂','🔥','💫','🌸',
-  '🦋','🌈','⭐','🎊','💖','🥳','😘','💯','🙌','👑',
-  '🌺','🍓','🫶','💝','🎀','🧸','🪄','🌙','☁️','🦄',
-]
+  "❤️",
+  "💕",
+  "✨",
+  "🎉",
+  "😍",
+  "🥰",
+  "😂",
+  "🔥",
+  "💫",
+  "🌸",
+  "🦋",
+  "🌈",
+  "⭐",
+  "🎊",
+  "💖",
+  "🥳",
+  "😘",
+  "💯",
+  "🙌",
+  "👑",
+  "🌺",
+  "🍓",
+  "🫶",
+  "💝",
+  "🎀",
+  "🧸",
+  "🪄",
+  "🌙",
+  "☁️",
+  "🦄",
+];
 
 export default function StripBuilderView() {
   const {
-    capturedPhotos, stripLayout, setStripLayout,
-    setFinalStripData, setAiCaption, setView, isCreator,
-  } = useAppStore()
+    capturedPhotos,
+    stripLayout,
+    setStripLayout,
+    setFinalStripData,
+    setAiCaption,
+    setView,
+    isCreator,
+  } = useAppStore();
 
-  const slotCount = Math.min(4, Math.max(capturedPhotos.length, 1))
-  const [isBuilding, setIsBuilding] = useState(false)
+  const slotCount = Math.min(4, Math.max(capturedPhotos.length, 1));
+  const [isBuilding, setIsBuilding] = useState(false);
 
-  const [rawSlots, setRawSlots] = useState<(CapturedPhoto | null)[]>(
-    () => Array(slotCount).fill(null)
-  )
+  const [rawSlots, setRawSlots] = useState<(CapturedPhoto | null)[]>(() =>
+    Array(slotCount).fill(null),
+  );
 
   const slots = useMemo<(CapturedPhoto | null)[]>(() => {
-    if (rawSlots.length === slotCount) return rawSlots
-    const next: (CapturedPhoto | null)[] = Array(slotCount).fill(null)
-    rawSlots.forEach((s, i) => { if (i < slotCount) next[i] = s })
-    return next
-  }, [rawSlots, slotCount])
+    if (rawSlots.length === slotCount) return rawSlots;
+    const next: (CapturedPhoto | null)[] = Array(slotCount).fill(null);
+    rawSlots.forEach((s, i) => {
+      if (i < slotCount) next[i] = s;
+    });
+    return next;
+  }, [rawSlots, slotCount]);
 
   // Quick stickers placed on the preview (emoji + position)
   const [overlayStickers, setOverlayStickers] = useState<
     { id: string; emoji: string; x: number; y: number; scale: number }[]
-  >([])
-  const [draggingStickerId, setDraggingStickerId] = useState<string | null>(null)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const stripPreviewRef = useRef<HTMLDivElement>(null)
+  >([]);
+  const [draggingStickerId, setDraggingStickerId] = useState<string | null>(
+    null,
+  );
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const stripPreviewRef = useRef<HTMLDivElement>(null);
 
   // --- Collaborative editing ---
-  const applyingRemote = useRef(false)
-  const didMount = useRef(false)
+  const applyingRemote = useRef(false);
+  const didMount = useRef(false);
 
   useEffect(() => {
-    const socket = getSocket()
+    const socket = getSocket();
     const onRemoteSlots = (data: { slots: (number | null)[] }) => {
-      applyingRemote.current = true
+      applyingRemote.current = true;
       setRawSlots(() => {
-        const len = Math.max(slotCount, data.slots.length)
+        const len = Math.max(slotCount, data.slots.length);
         return Array.from({ length: len }, (_, i) => {
-          const o = data.slots[i]
-          return o == null ? null : capturedPhotos.find(p => p.order === o) ?? null
-        })
-      })
-      setTimeout(() => { applyingRemote.current = false }, 0)
-    }
-    socket.on('strip-slot-update', onRemoteSlots)
-    return () => { socket.off('strip-slot-update', onRemoteSlots) }
-  }, [capturedPhotos, slotCount])
+          const o = data.slots[i];
+          return o == null
+            ? null
+            : (capturedPhotos.find((p) => p.order === o) ?? null);
+        });
+      });
+      setTimeout(() => {
+        applyingRemote.current = false;
+      }, 0);
+    };
+    socket.on("strip-slot-update", onRemoteSlots);
+    return () => {
+      socket.off("strip-slot-update", onRemoteSlots);
+    };
+  }, [capturedPhotos, slotCount]);
 
   useEffect(() => {
-    if (!didMount.current) { didMount.current = true; return }
-    if (applyingRemote.current) return
-    getSocket().emit('strip-slot-update', { slots: slots.map(s => s?.order ?? null) })
-  }, [slots])
+    if (!didMount.current) {
+      didMount.current = true;
+      return;
+    }
+    if (applyingRemote.current) return;
+    getSocket().emit("strip-slot-update", {
+      slots: slots.map((s) => s?.order ?? null),
+    });
+  }, [slots]);
 
-  const usedIds = new Set(slots.filter(Boolean).map(p => p!.id))
-  const pool = capturedPhotos.filter(p => !usedIds.has(p.id))
-  const filledCount = slots.filter(Boolean).length
+  const usedIds = new Set(slots.filter(Boolean).map((p) => p!.id));
+  const pool = capturedPhotos.filter((p) => !usedIds.has(p.id));
+  const filledCount = slots.filter(Boolean).length;
 
   const addToStrip = (photo: CapturedPhoto) => {
-    const idx = slots.findIndex(s => s === null)
-    if (idx === -1) { toast('Strip is full — remove a photo first'); return }
-    setRawSlots(prev => {
-      const base = prev.length === slotCount ? [...prev] : Array(slotCount).fill(null).map((_, i) => prev[i] ?? null)
-      base[idx] = photo
-      return base
-    })
-  }
+    const idx = slots.findIndex((s) => s === null);
+    if (idx === -1) {
+      toast("Strip is full — remove a photo first");
+      return;
+    }
+    setRawSlots((prev) => {
+      const base =
+        prev.length === slotCount
+          ? [...prev]
+          : Array(slotCount)
+              .fill(null)
+              .map((_, i) => prev[i] ?? null);
+      base[idx] = photo;
+      return base;
+    });
+  };
 
   const removeFromSlot = (idx: number) => {
-    setRawSlots(prev => prev.map((s, i) => (i === idx ? null : s)))
-  }
+    setRawSlots((prev) => prev.map((s, i) => (i === idx ? null : s)));
+  };
 
   const autoFill = () => {
-    const ordered = [...capturedPhotos].sort((a, b) => a.order - b.order)
-    setRawSlots(ordered.slice(0, slotCount))
-  }
+    const ordered = [...capturedPhotos].sort((a, b) => a.order - b.order);
+    setRawSlots(ordered.slice(0, slotCount));
+  };
 
   // Sticker drag on preview
-  const onStickerPointerDown = useCallback((
-    e: React.PointerEvent,
-    id: string,
-  ) => {
-    e.stopPropagation()
-    const preview = stripPreviewRef.current
-    if (!preview) return
-    const rect = preview.getBoundingClientRect()
-    const sticker = overlayStickers.find(s => s.id === id)!
-    setDraggingStickerId(id)
-    setDragOffset({
-      x: e.clientX - rect.left - sticker.x * rect.width,
-      y: e.clientY - rect.top - sticker.y * rect.height,
-    })
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-  }, [overlayStickers])
+  const onStickerPointerDown = useCallback(
+    (e: React.PointerEvent, id: string) => {
+      e.stopPropagation();
+      const preview = stripPreviewRef.current;
+      if (!preview) return;
+      const rect = preview.getBoundingClientRect();
+      const sticker = overlayStickers.find((s) => s.id === id)!;
+      setDraggingStickerId(id);
+      setDragOffset({
+        x: e.clientX - rect.left - sticker.x * rect.width,
+        y: e.clientY - rect.top - sticker.y * rect.height,
+      });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [overlayStickers],
+  );
 
-  const onStickerPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!draggingStickerId) return
-    const preview = stripPreviewRef.current
-    if (!preview) return
-    const rect = preview.getBoundingClientRect()
-    const nx = (e.clientX - rect.left - dragOffset.x) / rect.width
-    const ny = (e.clientY - rect.top - dragOffset.y) / rect.height
-    setOverlayStickers(prev => prev.map(s =>
-      s.id === draggingStickerId
-        ? { ...s, x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) }
-        : s
-    ))
-  }, [draggingStickerId, dragOffset])
+  const onStickerPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!draggingStickerId) return;
+      const preview = stripPreviewRef.current;
+      if (!preview) return;
+      const rect = preview.getBoundingClientRect();
+      const nx = (e.clientX - rect.left - dragOffset.x) / rect.width;
+      const ny = (e.clientY - rect.top - dragOffset.y) / rect.height;
+      setOverlayStickers((prev) =>
+        prev.map((s) =>
+          s.id === draggingStickerId
+            ? {
+                ...s,
+                x: Math.max(0, Math.min(1, nx)),
+                y: Math.max(0, Math.min(1, ny)),
+              }
+            : s,
+        ),
+      );
+    },
+    [draggingStickerId, dragOffset],
+  );
 
   const onStickerPointerUp = useCallback(() => {
-    setDraggingStickerId(null)
-  }, [])
+    setDraggingStickerId(null);
+  }, []);
 
   const addSticker = (emoji: string) => {
-    setOverlayStickers(prev => [...prev, {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      emoji,
-      x: 0.3 + Math.random() * 0.4,
-      y: 0.2 + Math.random() * 0.6,
-      scale: 1,
-    }])
-  }
+    setOverlayStickers((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        emoji,
+        x: 0.3 + Math.random() * 0.4,
+        y: 0.2 + Math.random() * 0.6,
+        scale: 1,
+      },
+    ]);
+  };
 
   const removeSticker = (id: string) => {
-    setOverlayStickers(prev => prev.filter(s => s.id !== id))
-  }
+    setOverlayStickers((prev) => prev.filter((s) => s.id !== id));
+  };
 
   const handleCreate = async () => {
-    const chosen = slots.filter(Boolean) as CapturedPhoto[]
-    if (chosen.length === 0) return
-    setIsBuilding(true)
+    const chosen = slots.filter(Boolean) as CapturedPhoto[];
+    if (chosen.length === 0) return;
+    setIsBuilding(true);
 
     const stripData = await renderStrip(chosen, {
       layout: stripLayout,
       isCreator,
       showHeader: true,
-    })
+    });
     if (!stripData) {
-      toast.error('Could not build the strip')
-      setIsBuilding(false)
-      return
+      toast.error("Could not build the strip");
+      setIsBuilding(false);
+      return;
     }
 
     // Burn overlay stickers into the strip canvas before saving
-    let finalData = stripData
+    let finalData = stripData;
     if (overlayStickers.length > 0) {
-      const canvas = document.createElement('canvas')
-      const img = new Image()
-      await new Promise<void>(res => { img.onload = () => res(); img.src = stripData })
-      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight
-      const ctx = canvas.getContext('2d')!
-      ctx.drawImage(img, 0, 0)
+      const canvas = document.createElement("canvas");
+      const img = new Image();
+      await new Promise<void>((res) => {
+        img.onload = () => res();
+        img.src = stripData;
+      });
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
       for (const s of overlayStickers) {
-        const px = s.x * canvas.width
-        const py = s.y * canvas.height
-        const size = 64 * s.scale * (canvas.width / 448)
-        ctx.font = `${size}px serif`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(s.emoji, px, py)
+        const px = s.x * canvas.width;
+        const py = s.y * canvas.height;
+        const size = 64 * s.scale * (canvas.width / 448);
+        ctx.font = `${size}px serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(s.emoji, px, py);
       }
-      finalData = canvas.toDataURL('image/jpeg', 0.92)
+      finalData = canvas.toDataURL("image/jpeg", 0.92);
     }
 
-    setFinalStripData(finalData)
-    setView('result')
+    setFinalStripData(finalData);
+    setView("result");
 
-    fetch('/api/ai/caption', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'caption', context: `${chosen.length} photos, ${stripLayout} layout` }),
+    fetch("/api/ai/caption", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "caption",
+        context: `${chosen.length} photos, ${stripLayout} layout`,
+      }),
     })
-      .then(r => r.json())
-      .then(d => setAiCaption(d.caption))
-      .catch(() => setAiCaption('A moment worth remembering ✨'))
-  }
+      .then((r) => r.json())
+      .then((d) => setAiCaption(d.caption))
+      .catch(() => setAiCaption("A moment worth remembering ✨"));
+  };
 
   return (
     <div className="min-h-screen bg-[#f6f5f3] flex flex-col">
       <header className="sticky top-0 z-40 bg-[#f6f5f3]/90 backdrop-blur-md border-b border-black/5">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-          <Button variant="ghost" size="sm" onClick={() => setView('studio')} className="text-neutral-600">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setView("studio")}
+            className="text-neutral-600"
+          >
             <ArrowLeft className="w-4 h-4 mr-1.5" />
             Back
           </Button>
           <h1 className="text-sm font-semibold tracking-[0.18em] text-neutral-500 uppercase">
             Build Your Strip
           </h1>
-          <Button variant="ghost" size="sm" onClick={autoFill} className="text-neutral-500 text-xs">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={autoFill}
+            className="text-neutral-500 text-xs"
+          >
             Auto-fill
           </Button>
         </div>
@@ -225,19 +322,23 @@ export default function StripBuilderView() {
             <LayoutGrid className="w-3.5 h-3.5" /> Layout
           </p>
           <div className="grid grid-cols-4 gap-2">
-            {LAYOUTS.map(l => (
+            {LAYOUTS.map((l) => (
               <button
                 key={l.id}
                 onClick={() => setStripLayout(l.id)}
                 className={`rounded-xl p-3 text-center transition-all border ${
                   stripLayout === l.id
-                    ? 'bg-white border-primary/40 shadow-sm ring-2 ring-primary/20'
-                    : 'bg-white/60 border-transparent hover:border-black/10 hover:bg-white'
+                    ? "bg-white border-primary/40 shadow-sm ring-2 ring-primary/20"
+                    : "bg-white/60 border-transparent hover:border-black/10 hover:bg-white"
                 }`}
               >
                 <span className="text-2xl block mb-1">{l.icon}</span>
-                <span className="text-[11px] font-semibold text-neutral-700 block">{l.name}</span>
-                <span className="text-[9px] text-neutral-400 leading-tight block mt-0.5">{l.desc}</span>
+                <span className="text-[11px] font-semibold text-neutral-700 block">
+                  {l.name}
+                </span>
+                <span className="text-[9px] text-neutral-400 leading-tight block mt-0.5">
+                  {l.desc}
+                </span>
               </button>
             ))}
           </div>
@@ -252,28 +353,27 @@ export default function StripBuilderView() {
                 Photos · {pool.length} available
               </p>
               <div className="grid grid-cols-2 gap-2 content-start">
-                <AnimatePresence>
-                  {[...pool].sort((a, b) => a.order - b.order).map(p => (
-                    <motion.button
+                {[...pool]
+                  .sort((a, b) => a.order - b.order)
+                  .map((p) => (
+                    <button
                       key={p.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.85 }}
-                      whileTap={{ scale: 0.95 }}
                       onClick={() => addToStrip(p)}
-                      className="relative rounded-xl overflow-hidden shadow-sm ring-1 ring-black/5 hover:ring-2 hover:ring-primary/40 transition-all group"
+                      className="relative rounded-xl overflow-hidden shadow-sm ring-1 ring-black/5 hover:ring-2 hover:ring-primary/40 transition-all group active:scale-95"
                     >
-                      <img src={p.dataUrl} alt="" className="w-full h-auto block" />
+                      <img
+                        src={p.dataUrl}
+                        alt=""
+                        className="w-full h-auto block"
+                      />
                       <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/10 transition-colors flex items-center justify-center">
                         <Plus className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 drop-shadow transition-opacity" />
                       </div>
                       <span className="absolute bottom-1.5 right-1.5 text-[9px] font-bold text-white bg-black/50 rounded px-1 py-0.5">
                         #{p.order}
                       </span>
-                    </motion.button>
+                    </button>
                   ))}
-                </AnimatePresence>
                 {pool.length === 0 && (
                   <p className="col-span-full text-sm text-neutral-400 py-8 text-center">
                     All photos placed ✓
@@ -288,7 +388,7 @@ export default function StripBuilderView() {
                 Stickers · tap to add
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {QUICK_STICKERS.map(e => (
+                {QUICK_STICKERS.map((e) => (
                   <button
                     key={e}
                     onClick={() => addSticker(e)}
@@ -329,7 +429,11 @@ export default function StripBuilderView() {
                   >
                     {slot ? (
                       <div className="group relative rounded-sm overflow-hidden">
-                        <img src={slot.dataUrl} alt="" className="w-full h-auto block" />
+                        <img
+                          src={slot.dataUrl}
+                          alt=""
+                          className="w-full h-auto block"
+                        />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                         <button
                           onClick={() => removeFromSlot(i)}
@@ -351,24 +455,24 @@ export default function StripBuilderView() {
               </Reorder.Group>
 
               {/* Overlay stickers (draggable) */}
-              {overlayStickers.map(s => (
+              {overlayStickers.map((s) => (
                 <div
                   key={s.id}
                   className="absolute cursor-grab active:cursor-grabbing select-none"
                   style={{
                     left: `${s.x * 100}%`,
                     top: `${s.y * 100}%`,
-                    transform: 'translate(-50%, -50%)',
+                    transform: "translate(-50%, -50%)",
                     fontSize: `${28 * s.scale}px`,
                     zIndex: 20,
-                    touchAction: 'none',
+                    touchAction: "none",
                   }}
-                  onPointerDown={e => onStickerPointerDown(e, s.id)}
+                  onPointerDown={(e) => onStickerPointerDown(e, s.id)}
                 >
                   <span>{s.emoji}</span>
                   <button
                     className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center leading-none shadow"
-                    onPointerDown={e => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => removeSticker(s.id)}
                   >
                     ×
@@ -377,7 +481,7 @@ export default function StripBuilderView() {
               ))}
 
               <p className="text-center text-[9px] tracking-widest text-neutral-400 mt-2.5 uppercase">
-                SnapTogether · {LAYOUTS.find(l => l.id === stripLayout)?.name}
+                SnapTogether · {LAYOUTS.find((l) => l.id === stripLayout)?.name}
               </p>
             </div>
           </div>
@@ -395,7 +499,7 @@ export default function StripBuilderView() {
             {isBuilding ? (
               <motion.div
                 animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                 className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full"
               />
             ) : (
@@ -408,5 +512,5 @@ export default function StripBuilderView() {
         </div>
       </div>
     </div>
-  )
+  );
 }
