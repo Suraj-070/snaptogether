@@ -29,6 +29,8 @@ interface Sticker {
   x: number
   y: number
   scale: number
+  rotation: number   // degrees
+  flipX: boolean
 }
 interface GiphySticker {
   id: string
@@ -88,7 +90,8 @@ export default function ResultView() {
   // Drag + pinch-to-scale
   const [draggingSticker, setDraggingSticker] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
+  const pinchRef  = useRef<{ dist: number; scale: number } | null>(null)
+  const resizeRef = useRef<{ startX: number; startY: number; startScale: number } | null>(null)
   const stripBgRef = useRef<string>("transparent")
 
   // Strip overlay options
@@ -264,21 +267,26 @@ export default function ResultView() {
       const px = s.x * canvas.width
       const py = s.y * canvas.height
       const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('/') || s.emoji.startsWith('blob')
+      ctx.save()
+      ctx.translate(px, py)
+      if (s.rotation) ctx.rotate((s.rotation * Math.PI) / 180)
+      if (s.flipX) ctx.scale(-1, 1)
       if (isUrl) {
         const cachedImg = stickerImageCache.current.get(s.id)
           || [...stickerImageCache.current.values()].find(i => i.src === s.emoji)
         if (cachedImg && cachedImg.complete) {
           const baseSize = 130 * s.scale * (canvas.width / 448)
           const aspect = cachedImg.naturalHeight / cachedImg.naturalWidth
-          ctx.drawImage(cachedImg, px - baseSize / 2, py - (baseSize * aspect) / 2, baseSize, baseSize * aspect)
+          ctx.drawImage(cachedImg, -baseSize / 2, -(baseSize * aspect) / 2, baseSize, baseSize * aspect)
         }
       } else {
         const size = 64 * s.scale * (canvas.width / 448)
         ctx.font = `${size}px serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillText(s.emoji, px, py)
+        ctx.fillText(s.emoji, 0, 0)
       }
+      ctx.restore()
     })
   }, [])
 
@@ -412,16 +420,16 @@ export default function ResultView() {
   }
 
   // Place any sticker (custom webp or giphy) onto the strip
-  function addStickerToCanvas(s: Sticker) {
-    // Preload into cache so canvas burn works immediately
-    if (s.emoji.startsWith('/') || s.emoji.startsWith('http')) {
+  function addStickerToCanvas(s: Omit<Sticker, 'rotation' | 'flipX'> & Partial<Pick<Sticker, 'rotation' | 'flipX'>>) {
+    const full: Sticker = { rotation: 0, flipX: false, ...s }
+    if (full.emoji.startsWith('/') || full.emoji.startsWith('http')) {
       const img = new Image()
       img.crossOrigin = 'anonymous'
-      img.src = s.emoji
-      img.onload = () => stickerImageCache.current.set(s.id, img)
+      img.src = full.emoji
+      img.onload = () => stickerImageCache.current.set(full.id, img)
     }
-    setStickers(prev => [...prev, s])
-    socket.emit('strip-sticker-add', { ...s })
+    setStickers(prev => [...prev, full])
+    socket.emit('strip-sticker-add', { ...full })
   }
 
   function scaleSticker(id: string, delta: number) {
@@ -430,6 +438,24 @@ export default function ResultView() {
       const next = Math.max(0.3, Math.min(3, s.scale + delta))
       socket.emit('strip-sticker-scale', { id, scale: next })
       return { ...s, scale: next }
+    }))
+  }
+
+  function rotateSticker(id: string, deg: number) {
+    setStickers(prev => prev.map(s => {
+      if (s.id !== id) return s
+      const next = ((s.rotation ?? 0) + deg + 360) % 360
+      socket.emit('strip-sticker-rotate', { id, rotation: next })
+      return { ...s, rotation: next }
+    }))
+  }
+
+  function flipSticker(id: string) {
+    setStickers(prev => prev.map(s => {
+      if (s.id !== id) return s
+      const next = !s.flipX
+      socket.emit('strip-sticker-flip', { id, flipX: next })
+      return { ...s, flipX: next }
     }))
   }
 
@@ -522,6 +548,12 @@ export default function ResultView() {
     socket.on('strip-sticker-add', onStickerAdd)
     socket.on('strip-sticker-move', onStickerMove)
     socket.on('strip-sticker-scale', onStickerScale)
+    socket.on('strip-sticker-rotate', (d: { id: string; rotation: number }) => {
+      setStickers(prev => prev.map(s => s.id === d.id ? { ...s, rotation: d.rotation } : s))
+    })
+    socket.on('strip-sticker-flip', (d: { id: string; flipX: boolean }) => {
+      setStickers(prev => prev.map(s => s.id === d.id ? { ...s, flipX: d.flipX } : s))
+    })
     socket.on('strip-sticker-remove', onStickerRemove)
     socket.on('strip-clear-drawing', onClearDrawing)
     return () => {
@@ -838,9 +870,14 @@ export default function ResultView() {
                         className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0 bg-white/5 flex items-center justify-center"
                       >
                         {isUrl ? (
-                          <img src={s.emoji} alt="" className="w-full h-full object-contain" />
+                          <img
+                            src={s.emoji}
+                            alt=""
+                            className="w-full h-full object-contain"
+                            style={{ transform: `rotate(${s.rotation ?? 0}deg) scaleX(${s.flipX ? -1 : 1})` }}
+                          />
                         ) : (
-                          <span className="text-lg">{s.emoji}</span>
+                          <span className="text-lg" style={{ display: 'inline-block', transform: `rotate(${s.rotation ?? 0}deg) scaleX(${s.flipX ? -1 : 1})` }}>{s.emoji}</span>
                         )}
                       </button>
 
@@ -1069,14 +1106,29 @@ export default function ResultView() {
             {stickers.map(s => {
               const isUrl = s.emoji.startsWith('http') || s.emoji.startsWith('/') || s.emoji.startsWith('blob')
               const isSelected = selectedSticker === s.id
+              const rot = s.rotation ?? 0
+              const HANDLE_SIZE = 10 // px
+
+              // Corner/edge handle positions (relative to sticker centre)
+              const handles: { cx: string; cy: string; cursor: string; dx: number; dy: number }[] = [
+                { cx: '-50%', cy: '-50%', cursor: 'nwse-resize', dx: -1, dy: -1 }, // TL
+                { cx:   '0%', cy: '-50%', cursor:  'ns-resize', dx:  0, dy: -1 }, // TC
+                { cx:  '50%', cy: '-50%', cursor: 'nesw-resize', dx:  1, dy: -1 }, // TR
+                { cx:  '50%', cy:   '0%', cursor:  'ew-resize', dx:  1, dy:  0 }, // MR
+                { cx:  '50%', cy:  '50%', cursor: 'nwse-resize', dx:  1, dy:  1 }, // BR
+                { cx:   '0%', cy:  '50%', cursor:  'ns-resize', dx:  0, dy:  1 }, // BC
+                { cx: '-50%', cy:  '50%', cursor: 'nesw-resize', dx: -1, dy:  1 }, // BL
+                { cx: '-50%', cy:   '0%', cursor:  'ew-resize', dx: -1, dy:  0 }, // ML
+              ]
+
               return (
                 <div
                   key={s.id}
                   className="absolute select-none"
                   style={{
                     left: `${s.x * 100}%`,
-                    top: `${s.y * 100}%`,
-                    transform: `translate(-50%, -50%) scale(${s.scale})`,
+                    top:  `${s.y * 100}%`,
+                    transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${s.flipX ? -s.scale : s.scale}, ${s.scale})`,
                     touchAction: 'none',
                     cursor: draggingSticker === s.id ? 'grabbing' : 'grab',
                     zIndex: isSelected ? 20 : 10,
@@ -1085,7 +1137,6 @@ export default function ResultView() {
                   onPointerMove={e => onStickerPointerMove(e, s.id)}
                   onPointerUp={onStickerPointerUp}
                   onTouchStart={e => {
-                    // Pinch-to-scale — touch only, not desktop
                     if (e.touches.length === 2 && 'ontouchstart' in window) {
                       e.preventDefault()
                       const dx = e.touches[0].clientX - e.touches[1].clientX
@@ -1106,23 +1157,151 @@ export default function ResultView() {
                   }}
                   onTouchEnd={() => { pinchRef.current = null }}
                 >
-                  {/* Scale ring when selected */}
-                  {isSelected && (
-                    <div className="absolute inset-0 rounded-full ring-2 ring-primary ring-offset-1 ring-offset-transparent pointer-events-none" style={{ margin: -6 }} />
-                  )}
+                  {/* Sticker image */}
                   {isUrl ? (
                     <img src={s.emoji} alt="sticker" className="w-14 h-14 object-contain pointer-events-none drop-shadow-lg" draggable={false} />
                   ) : (
-                    <span className="text-4xl drop-shadow-lg" style={{ lineHeight: 1 }}>{s.emoji}</span>
+                    <span className="text-4xl drop-shadow-lg pointer-events-none" style={{ lineHeight: 1 }}>{s.emoji}</span>
                   )}
-                  {/* Remove button on selected sticker */}
+
+                  {/* Selection border + handles */}
                   {isSelected && (
-                    <button
-                      onPointerDown={e => { e.stopPropagation(); removeSticker(s.id) }}
-                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center shadow-lg z-20"
+                    <>
+                      {/* Dashed selection border */}
+                      <div
+                        className="absolute pointer-events-none"
+                        style={{
+                          inset: -6,
+                          border: '1.5px solid rgba(100,160,255,0.9)',
+                          borderRadius: 3,
+                          boxShadow: '0 0 0 1px rgba(0,0,0,0.3)',
+                        }}
+                      />
+
+                      {/* Corner + edge resize handles */}
+                      {handles.map((h, i) => (
+                        <div
+                          key={i}
+                          className="absolute z-30"
+                          style={{
+                            width:  HANDLE_SIZE,
+                            height: HANDLE_SIZE,
+                            left:   `calc(${h.cx} + 50%)`,
+                            top:    `calc(${h.cy} + 50%)`,
+                            transform: 'translate(-50%, -50%)',
+                            background: '#fff',
+                            border: '1.5px solid rgba(100,160,255,0.9)',
+                            borderRadius: 2,
+                            cursor: h.cursor,
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                          }}
+                          onPointerDown={e => {
+                            e.stopPropagation()
+                            const startX = e.clientX
+                            const startY = e.clientY
+                            const startScale = s.scale
+                            resizeRef.current = { startX, startY, startScale }
+                            ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+
+                            const onMove = (ev: PointerEvent) => {
+                              if (!resizeRef.current) return
+                              const dx = ev.clientX - resizeRef.current.startX
+                              const dy = ev.clientY - resizeRef.current.startY
+                              const dist = Math.hypot(dx * h.dx, dy * h.dy)
+                              const container = containerRef.current
+                              if (!container) return
+                              const cw = container.getBoundingClientRect().width
+                              const delta = dist / cw * 2
+                              const next = Math.max(0.2, Math.min(4, resizeRef.current.startScale + delta))
+                              scaleSticker(s.id, next - s.scale)
+                            }
+                            const onUp = () => {
+                              resizeRef.current = null
+                              window.removeEventListener('pointermove', onMove)
+                              window.removeEventListener('pointerup', onUp)
+                            }
+                            window.addEventListener('pointermove', onMove)
+                            window.addEventListener('pointerup', onUp)
+                          }}
+                        />
+                      ))}
+
+                      {/* Rotate handle — above top centre */}
+                      <div
+                        className="absolute z-30 flex items-center justify-center"
+                        style={{
+                          width: 18, height: 18,
+                          left: '50%', top: -28,
+                          transform: 'translateX(-50%)',
+                          background: 'rgba(100,160,255,0.9)',
+                          borderRadius: '50%',
+                          cursor: 'grab',
+                          boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                        }}
+                        title="Drag to rotate"
+                        onPointerDown={e => {
+                          e.stopPropagation()
+                          ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+                          const container = containerRef.current
+                          if (!container) return
+                          const rect = container.getBoundingClientRect()
+                          const cx = rect.left + (s.x * rect.width)
+                          const cy = rect.top  + (s.y * rect.height)
+                          const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI
+                          const startRot = s.rotation ?? 0
+
+                          const onMove = (ev: PointerEvent) => {
+                            const angle = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI
+                            const delta = angle - startAngle
+                            const next = ((startRot + delta) + 360) % 360
+                            setStickers(prev => prev.map(st => st.id === s.id ? { ...st, rotation: next } : st))
+                          }
+                          const onUp = () => {
+                            const final = stickersRef.current.find(st => st.id === s.id)
+                            if (final) socket.emit('strip-sticker-rotate', { id: s.id, rotation: final.rotation })
+                            window.removeEventListener('pointermove', onMove)
+                            window.removeEventListener('pointerup', onUp)
+                          }
+                          window.addEventListener('pointermove', onMove)
+                          window.addEventListener('pointerup', onUp)
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+                          <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                          <path d="M21 3v5h-5"/>
+                        </svg>
+                      </div>
+
+                      {/* Line from sticker to rotate handle */}
+                      <div className="absolute pointer-events-none" style={{ width: 1, height: 22, background: 'rgba(100,160,255,0.7)', left: '50%', top: -28, transform: 'translateX(-50%)' }} />
+                    </>
+                  )}
+
+                  {/* Toolbar above sticker when selected */}
+                  {isSelected && (
+                    <div
+                      className="absolute flex items-center gap-0.5 bg-neutral-900/95 backdrop-blur-sm rounded-lg px-1 py-0.5 shadow-xl border border-white/10"
+                      style={{ bottom: 'calc(100% + 36px)', left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}
+                      onPointerDown={e => e.stopPropagation()}
                     >
-                      <X className="w-3 h-3 text-white" />
-                    </button>
+                      <button onClick={() => rotateSticker(s.id, -15)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/15 transition-colors text-white/70 hover:text-white" title="Rotate left −15°">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                      </button>
+                      <button onClick={() => rotateSticker(s.id, 15)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/15 transition-colors text-white/70 hover:text-white" title="Rotate right +15°">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                      </button>
+                      <div className="w-px h-4 bg-white/15 mx-0.5" />
+                      <button onClick={() => flipSticker(s.id)} className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${s.flipX ? 'bg-primary/30 text-primary' : 'hover:bg-white/15 text-white/70 hover:text-white'}`} title="Flip">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 20v2m0-6v-2m0-4V8m0-4V2"/></svg>
+                      </button>
+                      <div className="w-px h-4 bg-white/15 mx-0.5" />
+                      <button onClick={() => scaleSticker(s.id, -0.15)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/15 transition-colors text-white/70 hover:text-white font-bold">−</button>
+                      <button onClick={() => scaleSticker(s.id,  0.15)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/15 transition-colors text-white/70 hover:text-white font-bold">+</button>
+                      <div className="w-px h-4 bg-white/15 mx-0.5" />
+                      <button onClick={() => removeSticker(s.id)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/30 transition-colors text-white/50 hover:text-red-400" title="Remove">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
                   )}
                 </div>
               )

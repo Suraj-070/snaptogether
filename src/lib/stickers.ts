@@ -1,5 +1,5 @@
 /**
- * stickers.ts — dynamic Etekai sticker library
+ * stickers.ts — dynamic sticker library
  *
  * Drop any .webp / .png / .gif into /public/stickers/
  * The API at /api/stickers auto-scans the folder.

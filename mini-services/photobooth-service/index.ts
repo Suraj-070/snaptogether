@@ -425,6 +425,14 @@ io.on('connection', (socket) => {
     const code = socket.data.roomCode
     if (code) socket.to(code).emit('result-cursor', data)
   })
+  socket.on('strip-sticker-rotate', (data: { id: string; rotation: number }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-sticker-rotate', data)
+  })
+  socket.on('strip-sticker-flip', (data: { id: string; flipX: boolean }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-sticker-flip', data)
+  })
 })
 
 const PORT = Number(process.env.PORT) || 3004
