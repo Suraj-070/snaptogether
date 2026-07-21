@@ -64,15 +64,23 @@ const QUICK_STICKERS = [
 ];
 
 export default function StripBuilderView() {
-  const {
-    capturedPhotos,
-    stripLayout,
-    setStripLayout,
-    setFinalStripData,
-    setAiCaption,
-    setView,
-    isCreator,
-  } = useAppStore();
+  // const {
+  //   capturedPhotos,
+  //   stripLayout,
+  //   setStripLayout,
+  //   setFinalStripData,
+  //   setAiCaption,
+  //   setView,
+  //   isCreator,
+  // } = useAppStore();
+
+  const capturedPhotos = useAppStore((s) => s.capturedPhotos);
+  const stripLayout = useAppStore((s) => s.stripLayout);
+  const setStripLayout = useAppStore((s) => s.setStripLayout);
+  const setFinalStripData = useAppStore((s) => s.setFinalStripData);
+  const setAiCaption = useAppStore((s) => s.setAiCaption);
+  const setView = useAppStore((s) => s.setView);
+  const isCreator = useAppStore((s) => s.isCreator);
 
   const slotCount = Math.min(4, Math.max(capturedPhotos.length, 1));
   const [isBuilding, setIsBuilding] = useState(false);
@@ -364,7 +372,7 @@ export default function StripBuilderView() {
                       <img
                         src={p.dataUrl}
                         alt=""
-                        className="w-full h-auto block"
+                        className="w-full h-auto block" loading="eager" decoding="sync"
                       />
                       <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/10 transition-colors flex items-center justify-center">
                         <Plus className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 drop-shadow transition-opacity" />
