@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Copy, Check, Play, LogOut, Crown, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSocket } from '@/lib/socket'
+import ThemeToggle from '@/components/theme-toggle'
 import type { Participant } from '@/lib/types'
 
 const AVATAR_GRADIENTS = [
@@ -113,6 +114,7 @@ export default function LobbyView() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center p-4 overflow-hidden">
+      <div className="fixed top-3 right-4 z-50"><ThemeToggle /></div>
       {/* Ambient */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
         <div className="absolute -top-32 -left-16 w-[500px] h-[500px] rounded-full bg-primary/7 blur-[140px]" />
@@ -144,7 +146,7 @@ export default function LobbyView() {
                 />
               ))}
             </div>
-            <p className="text-sm text-white/40 font-medium">Opening studio…</p>
+            <p className="text-sm text-muted-foreground font-medium">Opening studio…</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -156,10 +158,10 @@ export default function LobbyView() {
         className="relative z-10 w-full max-w-sm"
       >
         {/* Room code card */}
-        <div className="glass-strong rounded-3xl p-6 mb-3 shadow-2xl shadow-black/50">
+        <div className="glass-strong rounded-3xl p-6 mb-3 shadow-2xl shadow-foreground/10">
           {/* Code display */}
           <div className="text-center mb-6">
-            <p className="text-[10px] font-bold tracking-[0.18em] uppercase text-white/25 mb-3">
+            <p className="text-[10px] font-bold tracking-[0.18em] uppercase text-muted-foreground mb-3">
               {isCreator ? 'Share this code' : 'Room'}
             </p>
             <div className="flex items-center justify-center gap-1.5 mb-4">
@@ -169,7 +171,7 @@ export default function LobbyView() {
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.04, ease: [0.22, 1, 0.36, 1] }}
-                  className="w-10 h-11 rounded-xl bg-white/7 border border-white/10 flex items-center justify-center text-lg font-bold font-mono"
+                  className="w-10 h-11 rounded-xl bg-foreground/[0.07] border border-border flex items-center justify-center text-lg font-bold font-mono"
                 >
                   {ch}
                 </motion.div>
@@ -178,14 +180,14 @@ export default function LobbyView() {
             <div className="flex items-center justify-center gap-2">
               <button
                 onClick={copyCode}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/6 hover:bg-white/10 border border-white/8 text-xs font-semibold text-white/60 hover:text-white/90 transition-all active:scale-95"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-foreground/[0.06] hover:bg-foreground/10 border border-border text-xs font-semibold text-foreground/70 hover:text-foreground/90 transition-all active:scale-95"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
                 {copied ? 'Copied!' : 'Copy'}
               </button>
               <button
                 onClick={shareLink}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/6 hover:bg-white/10 border border-white/8 text-xs font-semibold text-white/60 hover:text-white/90 transition-all active:scale-95"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-foreground/[0.06] hover:bg-foreground/10 border border-border text-xs font-semibold text-foreground/70 hover:text-foreground/90 transition-all active:scale-95"
               >
                 <Share2 className="w-3.5 h-3.5" />
                 Share link
@@ -203,7 +205,7 @@ export default function LobbyView() {
                   animate={{ opacity: 1, x: 0, height: 'auto', marginBottom: 0 }}
                   exit={{ opacity: 0, x: 14, height: 0 }}
                   transition={{ duration: 0.22 }}
-                  className="flex items-center gap-3 bg-white/[0.04] rounded-2xl px-3.5 py-2.5"
+                  className="flex items-center gap-3 bg-foreground/[0.04] rounded-2xl px-3.5 py-2.5"
                 >
                   <div className="relative">
                     <Avatar name={p.username} index={i} />
@@ -211,17 +213,17 @@ export default function LobbyView() {
                       animate={p.isReady ? { scale: [1, 1.4, 1] } : { scale: 1 }}
                       transition={{ duration: 0.3 }}
                       className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-background transition-colors duration-300 ${
-                        p.isReady ? 'bg-green-400' : 'bg-white/15'
+                        p.isReady ? 'bg-green-400' : 'bg-foreground/15'
                       }`}
                     />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-sm font-semibold truncate max-w-[120px]">{p.username}</span>
-                      {p.username === username && <span className="text-[10px] text-white/25">you</span>}
+                      {p.username === username && <span className="text-[10px] text-muted-foreground">you</span>}
                       {i === 0 && <Crown className="w-3 h-3 text-amber-400 flex-shrink-0" />}
                     </div>
-                    <span className={`text-[11px] font-medium transition-colors ${p.isReady ? 'text-green-400' : 'text-white/25'}`}>
+                    <span className={`text-[11px] font-medium transition-colors ${p.isReady ? 'text-green-400' : 'text-muted-foreground'}`}>
                       {p.isReady ? '✓ Ready' : 'Not ready yet'}
                     </span>
                   </div>
@@ -234,12 +236,12 @@ export default function LobbyView() {
               <motion.div
                 animate={{ opacity: [0.35, 0.75, 0.35] }}
                 transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                className="flex items-center gap-3 border border-dashed border-white/8 rounded-2xl px-3.5 py-2.5"
+                className="flex items-center gap-3 border border-dashed border-border rounded-2xl px-3.5 py-2.5"
               >
-                <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-dashed border-white/12 flex items-center justify-center text-white/20 text-xs">
+                <div className="w-11 h-11 rounded-full bg-foreground/[0.04] border border-dashed border-border flex items-center justify-center text-foreground/30 text-xs">
                   ?
                 </div>
-                <span className="text-sm text-white/25">Waiting for your partner…</span>
+                <span className="text-sm text-muted-foreground">Waiting for your partner…</span>
               </motion.div>
             )}
           </div>
@@ -252,7 +254,7 @@ export default function LobbyView() {
               className={`w-full py-3 rounded-xl text-sm font-bold border transition-all active:scale-[0.98] ${
                 iAmReady
                   ? 'bg-green-500/12 border-green-500/25 text-green-400 hover:bg-green-500/18'
-                  : 'bg-white/[0.05] border-white/8 text-white/50 hover:text-white/80 hover:bg-white/8'
+                  : 'bg-foreground/[0.05] border-border text-foreground/60 hover:text-foreground/80 hover:bg-foreground/[0.08]'
               }`}
             >
               {iAmReady ? '✓ Ready!' : 'Tap when ready'}
@@ -265,7 +267,7 @@ export default function LobbyView() {
                 className={`w-full py-3.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all ${
                   allReady
                     ? 'bg-primary text-white shadow-lg shadow-primary/25 hover:bg-primary/90'
-                    : 'bg-white/7 text-white/35 border border-white/8'
+                    : 'bg-foreground/[0.07] text-muted-foreground border border-border'
                 }`}
               >
                 <Play className="w-4 h-4" />
@@ -281,7 +283,7 @@ export default function LobbyView() {
                 <motion.p
                   animate={{ opacity: [0.25, 0.6, 0.25] }}
                   transition={{ duration: 2.2, repeat: Infinity }}
-                  className="text-xs text-white/35"
+                  className="text-xs text-muted-foreground"
                 >
                   Waiting for the host to start…
                 </motion.p>
@@ -292,7 +294,7 @@ export default function LobbyView() {
 
         <button
           onClick={leaveRoom}
-          className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs text-white/20 hover:text-white/45 transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs text-foreground/30 hover:text-foreground/50 transition-colors"
         >
           <LogOut className="w-3.5 h-3.5" />
           Leave room

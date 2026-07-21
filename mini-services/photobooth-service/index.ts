@@ -412,6 +412,19 @@ io.on('connection', (socket) => {
     const code = socket.data.roomCode
     if (code) socket.to(code).emit('strip-sticker-remove', data)
   })
+  socket.on('strip-sticker-scale', (data: { id: string; scale: number }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('strip-sticker-scale', data)
+  })
+  // Collaborative cursors — relay mouse position to partner
+  socket.on('studio-cursor', (data: { x: number; y: number; username: string }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('studio-cursor', data)
+  })
+  socket.on('result-cursor', (data: { x: number; y: number; username: string }) => {
+    const code = socket.data.roomCode
+    if (code) socket.to(code).emit('result-cursor', data)
+  })
 })
 
 const PORT = Number(process.env.PORT) || 3004

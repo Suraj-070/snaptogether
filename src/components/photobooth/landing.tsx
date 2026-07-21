@@ -6,6 +6,7 @@ import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Camera, ArrowRight, LogIn, GalleryHorizontalEnd, User } from 'lucide-react'
 import { getSocket } from '@/lib/socket'
+import ThemeToggle from '@/components/theme-toggle'
 import { toast } from 'sonner'
 
 const STEPS = [
@@ -59,7 +60,7 @@ function socketCreate(uname: string, cb: RoomCallbacks) {
   const t = setTimeout(() => onErr({ message: 'Server unreachable. Is the socket service running?' }), 10000)
   socket.on('room-created', onCreated)
   socket.on('error', onErr)
-  const emit = () => socket.emit('create-room', { username: uname, theme: 'classic', filter: 'none' })
+  const emit = () => socket.emit('create-room', { username: uname, theme: 'classic', filter: 'none', totalPhotos: 6 })
   if (socket.connected) { emit() } else { socket.once('connect', emit); socket.connect() }
 }
 
@@ -194,7 +195,7 @@ export default function LandingView() {
       </div>
 
       {/* Nav */}
-      <nav className="relative z-10 flex items-center justify-between px-5 h-14 border-b border-white/[0.06]">
+      <nav className="relative z-10 flex items-center justify-between px-5 h-14 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center">
             <Camera className="w-3.5 h-3.5 text-primary" />
@@ -204,14 +205,15 @@ export default function LandingView() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setView('gallery')}
-            className="p-2 rounded-lg text-white/35 hover:text-white/70 hover:bg-white/6 transition-all text-xs flex items-center gap-1.5"
+            className="p-2 rounded-lg text-muted-foreground hover:text-foreground/80 hover:bg-foreground/[0.06] transition-all text-xs flex items-center gap-1.5"
           >
             <GalleryHorizontalEnd className="w-4 h-4" />
             <span className="hidden sm:inline">Gallery</span>
           </button>
+          <ThemeToggle />
           <button
             onClick={() => session ? signOut() : setView('profile')}
-            className="p-2 rounded-lg text-white/35 hover:text-white/70 hover:bg-white/6 transition-all text-xs flex items-center gap-1.5"
+            className="p-2 rounded-lg text-muted-foreground hover:text-foreground/80 hover:bg-foreground/[0.06] transition-all text-xs flex items-center gap-1.5"
           >
             {session?.user?.image
               ? <img src={session.user.image} className="w-5 h-5 rounded-full" alt="" />
@@ -234,7 +236,7 @@ export default function LandingView() {
           >
             <div className="relative flex items-center justify-center">
               <div className="absolute w-20 h-20 rounded-[24px] bg-primary/10 animate-pulse-ring" />
-              <div className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-primary/25 to-violet-500/15 border border-white/10 flex items-center justify-center shadow-xl shadow-primary/10">
+              <div className="w-16 h-16 rounded-[20px] bg-gradient-to-br from-primary/25 to-violet-500/15 border border-border flex items-center justify-center shadow-xl shadow-primary/10">
                 <Camera className="w-7 h-7 text-primary" />
               </div>
             </div>
@@ -251,7 +253,7 @@ export default function LandingView() {
               Capture moments<br />
               <span className="gradient-text">together, anywhere</span>
             </h1>
-            <p className="text-sm text-white/35">Real-time photo booth for two</p>
+            <p className="text-sm text-muted-foreground">Real-time photo booth for two</p>
           </motion.div>
 
           {/* Card */}
@@ -259,11 +261,11 @@ export default function LandingView() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.14 }}
-            className="glass-strong rounded-3xl p-5 mb-4 shadow-2xl shadow-black/50"
+            className="glass-strong rounded-3xl p-5 mb-4 shadow-2xl shadow-foreground/10"
           >
             {/* Name */}
             <div className="mb-4">
-              <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-white/30 mb-1.5">
+              <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground mb-1.5">
                 Your name
               </label>
               <input
@@ -277,16 +279,16 @@ export default function LandingView() {
                 onBlur={() => setFocused(false)}
                 maxLength={20}
                 autoComplete="nickname"
-                className={`w-full rounded-xl px-4 py-3 text-base font-semibold bg-white/6 border outline-none transition-all placeholder:text-white/20 ${
+                className={`w-full rounded-xl px-4 py-3 text-base font-semibold bg-foreground/[0.06] border outline-none transition-all placeholder:text-foreground/30 ${
                   focused
-                    ? 'border-primary/50 bg-white/8 shadow-[0_0_0_3px_oklch(0.65_0.22_350/0.12)]'
-                    : 'border-white/8 hover:border-white/15'
+                    ? 'border-primary/50 bg-foreground/[0.08] shadow-[0_0_0_3px_oklch(0.65_0.22_350/0.12)]'
+                    : 'border-border hover:border-border/60'
                 }`}
               />
             </div>
 
             {/* Tab toggle */}
-            <div className="flex bg-white/[0.05] rounded-2xl p-1 mb-4 gap-1">
+            <div className="flex bg-foreground/[0.05] rounded-2xl p-1 mb-4 gap-1">
               {(['create', 'join'] as const).map(m => (
                 <button
                   key={m}
@@ -295,13 +297,13 @@ export default function LandingView() {
                     if (m === 'join') setTimeout(() => joinInputRef.current?.focus(), 50)
                   }}
                   className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all relative overflow-hidden ${
-                    mode === m ? 'text-white' : 'text-white/35 hover:text-white/55'
+                    mode === m ? 'text-foreground' : 'text-muted-foreground hover:text-foreground/65'
                   }`}
                 >
                   {mode === m && (
                     <motion.div
                       layoutId="tab-bg"
-                      className="absolute inset-0 bg-white/10 rounded-xl"
+                      className="absolute inset-0 bg-foreground/10 rounded-xl"
                       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                     />
                   )}
@@ -336,7 +338,7 @@ export default function LandingView() {
                       </>
                     )}
                   </button>
-                  <p className="text-center text-[11px] text-white/20 mt-2">
+                  <p className="text-center text-[11px] text-foreground/30 mt-2">
                     You'll get a 6-letter code to share
                   </p>
                 </motion.div>
@@ -350,7 +352,7 @@ export default function LandingView() {
                   className="space-y-3"
                 >
                   <div>
-                    <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-white/30 mb-1.5">
+                    <label className="block text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground mb-1.5">
                       Room code
                     </label>
                     <div className="relative h-14">
@@ -361,10 +363,10 @@ export default function LandingView() {
                             key={i}
                             className={`flex-1 h-full rounded-xl border flex items-center justify-center text-lg font-bold font-mono transition-all duration-150 ${
                               i < joinCode.length
-                                ? 'bg-primary/15 border-primary/50 text-white'
+                                ? 'bg-primary/15 border-primary/50 text-foreground'
                                 : i === joinCode.length
-                                ? 'bg-white/8 border-primary/30 text-white/20'
-                                : 'bg-white/4 border-white/8 text-white/15'
+                                ? 'bg-foreground/[0.08] border-primary/30 text-foreground/30'
+                                : 'bg-foreground/[0.04] border-border text-foreground/20'
                             }`}
                           >
                             {joinCode[i] ?? '·'}
@@ -414,10 +416,10 @@ export default function LandingView() {
           >
             {STEPS.map((s, i) => (
               <div key={i} className="flex flex-col items-center gap-1.5 text-center">
-                <div className="w-9 h-9 rounded-xl bg-white/[0.05] border border-white/[0.07] flex items-center justify-center text-base">
+                <div className="w-9 h-9 rounded-xl bg-foreground/[0.05] border border-border flex items-center justify-center text-base">
                   {s.emoji}
                 </div>
-                <span className="text-[9px] leading-tight text-white/25">{s.label}</span>
+                <span className="text-[9px] leading-tight text-muted-foreground">{s.label}</span>
               </div>
             ))}
           </motion.div>

@@ -1,11 +1,12 @@
 'use client'
+import ThemeToggle from '@/components/theme-toggle'
 
 import { useAppStore } from '@/lib/store'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Download, Share2, RotateCcw, Sparkles,
   Camera, Copy, Check, Home, GalleryHorizontalEnd,
-  Save, Pen, Eraser, Trash2, Search, Loader2, X, ToggleLeft, ToggleRight,
+  Save, Pen, Eraser, Trash2, Search, Loader2, X, ToggleLeft, ToggleRight, ArrowLeft,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -38,14 +39,24 @@ interface GiphySticker {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const GIPHY_KEY = process.env.NEXT_PUBLIC_GIPHY_KEY || 'bS0cRf1KVChzdHqPyCXFfpZmgSvooUWB'
-const STICKER_SUGGESTIONS = ['love', 'cute', 'funny', 'party', 'flowers', 'cats', 'fire', 'vibes']
+const STICKER_CATEGORIES: { label: string; emoji: string; tags: string[] }[] = [
+  { label: 'Love',      emoji: '💕', tags: ['love', 'hearts', 'kiss', 'xoxo', 'romance'] },
+  { label: 'Cute',      emoji: '🥰', tags: ['cute', 'kawaii', 'bunny', 'bear hug', 'adorable'] },
+  { label: 'Party',     emoji: '🎉', tags: ['party', 'celebrate', 'confetti', 'disco', 'cheers'] },
+  { label: 'Vintage',   emoji: '📷', tags: ['vintage', 'retro', 'film', 'polaroid', 'nostalgia'] },
+  { label: 'Nature',    emoji: '🌸', tags: ['flowers', 'sakura', 'butterfly', 'sparkle', 'rainbow'] },
+  { label: 'Mood',      emoji: '✨', tags: ['vibes', 'aesthetic', 'dreamy', 'golden hour', 'magic'] },
+  { label: 'Funny',     emoji: '😂', tags: ['funny', 'lol', 'reaction', 'anime', 'meme'] },
+  { label: 'Night out', emoji: '🌙', tags: ['night', 'neon', 'glitter', 'fire', 'summer'] },
+]
+const STICKER_SUGGESTIONS = STICKER_CATEGORIES.flatMap(c => c.tags).slice(0, 8)
 const DRAW_COLORS = ['#ffffff','#000000','#ff3b5c','#ff9500','#ffcc02','#34c759','#30b0c7','#007aff','#af52de','#ff2d55']
 const DRAW_SIZES = [3, 6, 12, 20, 32] // actual pixel sizes at 448px base
 
 export default function ResultView() {
   const {
     finalStripData, aiCaption, roomCode, username, userId, sessionId,
-    capturedPhotos, setView, resetSession, setAiCaption,
+    capturedPhotos, chosenPhotos, setView, resetSession, setAiCaption,
   } = useAppStore()
 
   const [tool, setTool] = useState<'sticker' | 'draw' | 'erase'>('sticker')
@@ -62,9 +73,15 @@ export default function ResultView() {
   const [stickerSearched, setStickerSearched] = useState(false)
   const stickerImageCache = useRef<Map<string, HTMLImageElement>>(new Map())
 
-  // Drag
+  // Eraser cursor
+  const [eraserPos, setEraserPos] = useState<{ x: number; y: number } | null>(null)
+  // Partner cursor
+  const [partnerCursor, setPartnerCursor] = useState<{ x: number; y: number; name: string } | null>(null)
+
+  // Drag + pinch-to-scale
   const [draggingSticker, setDraggingSticker] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
 
   // Strip overlay options
   const [showStripHeader, setShowStripHeader] = useState(true)
@@ -77,7 +94,8 @@ export default function ResultView() {
   const [copied, setCopied] = useState(false)
 
   // Refs
-  const drawCanvasRef = useRef<HTMLCanvasElement>(null)
+  const drawCanvasRef = useRef<HTMLCanvasElement>(null)   // display canvas (strip + overlay)
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null)  // drawings only (transparent bg)
   const containerRef = useRef<HTMLDivElement>(null)
   const stripImgRef = useRef<HTMLImageElement | null>(null)
   const isDrawingRef = useRef(false)
@@ -92,6 +110,30 @@ export default function ResultView() {
   useEffect(() => { stickersRef.current = stickers }, [stickers])
 
   // paintStroke defined before redraw so redraw can call it
+  // Get or create the overlay canvas (same size as display canvas, transparent bg)
+  const getOverlay = (): HTMLCanvasElement => {
+    const display = drawCanvasRef.current!
+    if (!overlayCanvasRef.current) {
+      const oc = document.createElement('canvas')
+      oc.width  = display.width
+      oc.height = display.height
+      overlayCanvasRef.current = oc
+    }
+    const oc = overlayCanvasRef.current
+    if (oc.width !== display.width || oc.height !== display.height) {
+      // Resize but preserve content by copying
+      const temp = document.createElement('canvas')
+      temp.width = oc.width; temp.height = oc.height
+      temp.getContext('2d')!.drawImage(oc, 0, 0)
+      oc.width  = display.width
+      oc.height = display.height
+      oc.getContext('2d')!.drawImage(temp, 0, 0)
+    }
+    return oc
+  }
+
+  // Paint a stroke onto the overlay canvas (transparent bg)
+  // Erase uses destination-out on overlay — strip underneath is untouched
   const paintStroke = (
     ctx: CanvasRenderingContext2D,
     pts: { x: number; y: number }[],
@@ -122,6 +164,19 @@ export default function ResultView() {
     ctx.restore()
   }
 
+  // Composite: strip → overlay → stickers onto display canvas
+  const composite = () => {
+    const canvas = drawCanvasRef.current
+    const img    = stripImgRef.current
+    if (!canvas || !img) return
+    const ctx = canvas.getContext('2d')!
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0)
+    if (overlayCanvasRef.current) {
+      ctx.drawImage(overlayCanvasRef.current, 0, 0)
+    }
+  }
+
   // ── Redraw canvas ──
   const redraw = useCallback((
     overrideStrokes?: Stroke[],
@@ -130,23 +185,32 @@ export default function ResultView() {
     const canvas = drawCanvasRef.current
     const img = stripImgRef.current
     if (!canvas || !img) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
 
-    const activeStrokes = overrideStrokes ?? strokesRef.current
+    const activeStrokes  = overrideStrokes  ?? strokesRef.current
     const activeStickers = overrideStickers ?? stickersRef.current
 
-    canvas.width = img.naturalWidth
+    // Resize display canvas
+    canvas.width  = img.naturalWidth
     canvas.height = img.naturalHeight
-    ctx.drawImage(img, 0, 0)
 
-    activeStrokes.forEach(s => paintStroke(ctx, s.points, s.color, s.size, canvas.width, canvas.height))
+    // Reset overlay canvas and replay all strokes onto it
+    const oc  = getOverlay()
+    const octx = oc.getContext('2d')!
+    octx.clearRect(0, 0, oc.width, oc.height)
+
+    activeStrokes.forEach(s => paintStroke(octx, s.points, s.color, s.size, oc.width, oc.height))
 
     remoteStrokesRef.current.forEach((pts, uid) => {
       if (pts.length < 2) return
       const hue = [...uid].reduce((a, c) => a + c.charCodeAt(0), 0) % 360
-      paintStroke(ctx, pts, `hsl(${hue},80%,55%)`, 2, canvas.width, canvas.height)
+      paintStroke(octx, pts, `hsl(${hue},80%,55%)`, 2, oc.width, oc.height)
     })
+
+    // Composite onto display
+    const ctx = canvas.getContext('2d')!
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0)
+    ctx.drawImage(oc, 0, 0)
 
     activeStickers.forEach(s => {
       const px = s.x * canvas.width
@@ -211,31 +275,17 @@ export default function ResultView() {
     currentStrokeRef.current.push(pt)
     socket.emit('strip-draw-move', { x: pt.x, y: pt.y, userId: userId || 'me' })
 
-    const canvas = drawCanvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!drawCanvasRef.current) return
     const pts = currentStrokeRef.current
     if (pts.length < 2) return
     const last = pts[pts.length - 2]
     const cur = pts[pts.length - 1]
-    ctx.save()
-    // FIX: eraser must use destination-out, not just a color
-    if (tool === 'erase') {
-      ctx.globalCompositeOperation = 'destination-out'
-      ctx.strokeStyle = 'rgba(0,0,0,1)'
-    } else {
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.strokeStyle = color
-    }
-    ctx.lineWidth = DRAW_SIZES[brushSize] * (canvas.width / 448)
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.beginPath()
-    ctx.moveTo(last.x * canvas.width, last.y * canvas.height)
-    ctx.lineTo(cur.x * canvas.width, cur.y * canvas.height)
-    ctx.stroke()
-    ctx.restore()
+    // Draw segment onto overlay canvas
+    const oc   = getOverlay()
+    const octx = oc.getContext('2d')!
+    paintStroke(octx, [last, cur], tool === 'erase' ? 'erase' : color, brushSize, oc.width, oc.height)
+    // Composite strip + overlay onto display
+    composite()
   }
 
   function onPointerUp() {
@@ -312,6 +362,15 @@ export default function ResultView() {
     socket.emit('strip-sticker-remove', { id })
   }
 
+  function scaleSticker(id: string, delta: number) {
+    setStickers(prev => prev.map(s => {
+      if (s.id !== id) return s
+      const next = Math.max(0.3, Math.min(3, s.scale + delta))
+      socket.emit('strip-sticker-scale', { id, scale: next })
+      return { ...s, scale: next }
+    }))
+  }
+
   // ── Sticker drag ──
   function onStickerPointerDown(e: React.PointerEvent, id: string) {
     e.stopPropagation()
@@ -369,6 +428,8 @@ export default function ResultView() {
       setStrokes(prev => [...prev, { points: pts, color: `hsl(${hue},80%,55%)`, size: 2, userId: d.userId }])
     }
     const onStickerAdd = async (data: Sticker & { giphyUrl?: string }) => {
+      // Skip if this sticker was placed by us (already in state from placeSticker)
+      if (stickersRef.current.some(s => s.id === data.id)) return
       if (data.giphyUrl) {
         const img = new Image()
         img.crossOrigin = 'anonymous'
@@ -380,16 +441,25 @@ export default function ResultView() {
     const onStickerMove = (d: { id: string; x: number; y: number }) => {
       setStickers(prev => prev.map(s => s.id === d.id ? { ...s, x: d.x, y: d.y } : s))
     }
+    const onStickerScale = (d: { id: string; scale: number }) => {
+      setStickers(prev => prev.map(s => s.id === d.id ? { ...s, scale: d.scale } : s))
+    }
     const onStickerRemove = (d: { id: string }) => {
       setStickers(prev => prev.filter(s => s.id !== d.id))
     }
     const onClearDrawing = () => { setStrokes([]) }
+    const onResultCursor = (d: { x: number; y: number; username: string }) => {
+      if (d.x < 0) setPartnerCursor(null)
+      else setPartnerCursor({ x: d.x, y: d.y, name: d.username })
+    }
 
+    socket.on('result-cursor', onResultCursor)
     socket.on('strip-draw-start', onDrawStart)
     socket.on('strip-draw-move', onDrawMove)
     socket.on('strip-draw-end', onDrawEnd)
     socket.on('strip-sticker-add', onStickerAdd)
     socket.on('strip-sticker-move', onStickerMove)
+    socket.on('strip-sticker-scale', onStickerScale)
     socket.on('strip-sticker-remove', onStickerRemove)
     socket.on('strip-clear-drawing', onClearDrawing)
     return () => {
@@ -398,40 +468,23 @@ export default function ResultView() {
       socket.off('strip-draw-end', onDrawEnd)
       socket.off('strip-sticker-add', onStickerAdd)
       socket.off('strip-sticker-move', onStickerMove)
+      socket.off('strip-sticker-scale', onStickerScale)
       socket.off('strip-sticker-remove', onStickerRemove)
       socket.off('strip-clear-drawing', onClearDrawing)
+      socket.off('result-cursor', onResultCursor)
     }
   }, [socket])
 
   // ── Download — re-renders strip with current options before saving ──
-  const handleDownload = async () => {
-    if (!finalStripData || !capturedPhotos.length) return
-    const chosen = capturedPhotos.sort((a, b) => a.order - b.order)
-
-    // Re-render strip with current header/caption options
-    const freshStrip = await renderStrip(chosen, {
-      showHeader: showStripHeader,
-      showCaption: showStripCaption,
-      caption: aiCaption || '',
-    })
-    if (!freshStrip) return
-
-    // Update the canvas with fresh strip + decorations
-    const img = new Image()
-    img.onload = () => {
-      stripImgRef.current = img
-      redraw(strokesRef.current, stickersRef.current)
-      setTimeout(() => {
-        const canvas = drawCanvasRef.current
-        if (!canvas) return
-        const link = document.createElement('a')
-        link.download = `snaptogether-${roomCode}-${Date.now()}.png`
-        link.href = canvas.toDataURL('image/png', 1.0)
-        link.click()
-        toast.success('HD strip saved! 🎉')
-      }, 120)
-    }
-    img.src = freshStrip
+  const handleDownload = () => {
+    // Use canvas directly — it already has chosen photos + baked stickers + any result-view drawings
+    const canvas = drawCanvasRef.current
+    if (!canvas) return
+    const link = document.createElement('a')
+    link.download = `snaptogether-${roomCode}-${Date.now()}.png`
+    link.href = canvas.toDataURL('image/png', 1.0)
+    link.click()
+    toast.success('Strip saved! 🎉')
   }
 
   const handleShare = async () => {
@@ -488,22 +541,26 @@ export default function ResultView() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen flex flex-col bg-[#0e0e12] text-white">
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
 
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-black/70 backdrop-blur-xl border-b border-white/8">
-        <div className="max-w-6xl mx-auto px-4 h-13 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-background/90 backdrop-blur-xl border-b border-border">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+          <Button variant="ghost" size="sm" onClick={() => setView('stripBuilder')} className="text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="w-4 h-4 mr-1.5" />
+            Back
+          </Button>
+          <h1 className="text-sm font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+            Decorate Your Strip
+          </h1>
           <div className="flex items-center gap-2">
-            <Camera className="w-4 h-4 text-primary" />
-            <span className="font-semibold text-sm">Decorate Your Strip</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={handleDownload} className="text-white/80 hover:text-white text-xs gap-1.5 hover:bg-white/10">
-              <Download className="w-3.5 h-3.5" /> Save HD
+            <Button variant="ghost" size="sm" onClick={handleDownload} className="text-muted-foreground hover:text-foreground text-xs gap-1.5">
+              <Download className="w-3.5 h-3.5" /> Save
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setView('gallery')} className="text-white/60 hover:text-white">
+            <Button variant="ghost" size="sm" onClick={() => setView('gallery')} className="text-muted-foreground hover:text-foreground">
               <GalleryHorizontalEnd className="w-4 h-4" />
             </Button>
+            <ThemeToggle />
           </div>
         </div>
       </header>
@@ -543,20 +600,44 @@ export default function ResultView() {
                 </button>
               </div>
 
-              {/* Suggestion tags */}
-              {!stickerSearched && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {STICKER_SUGGESTIONS.map(tag => (
+              {/* Category presets */}
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[9px] text-white/30 uppercase tracking-wider">Quick picks</p>
+                <div className="grid grid-cols-4 gap-1">
+                  {STICKER_CATEGORIES.map(cat => (
                     <button
-                      key={tag}
-                      onClick={() => { setStickerQuery(tag); searchGiphy(tag) }}
-                      className="px-2.5 py-1 bg-white/12 hover:bg-white/22 rounded-full text-[10px] text-white/70 hover:text-white transition-colors capitalize border border-white/10"
+                      key={cat.label}
+                      onClick={() => { setStickerQuery(cat.tags[0]); searchGiphy(cat.tags[0]) }}
+                      className={`flex flex-col items-center gap-0.5 py-1.5 px-1 rounded-xl border text-center transition-all hover:scale-105 active:scale-95 ${
+                        stickerQuery === cat.tags[0]
+                          ? 'bg-primary/20 border-primary/40 text-white'
+                          : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90'
+                      }`}
                     >
-                      {tag}
+                      <span className="text-base">{cat.emoji}</span>
+                      <span className="text-[8px] font-medium leading-tight">{cat.label}</span>
                     </button>
                   ))}
                 </div>
-              )}
+                {/* Tag chips for selected category */}
+                {STICKER_CATEGORIES.find(cat => cat.tags.includes(stickerQuery)) && (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {STICKER_CATEGORIES.find(cat => cat.tags.includes(stickerQuery))!.tags.map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => { setStickerQuery(tag); searchGiphy(tag) }}
+                        className={`px-2 py-0.5 rounded-full text-[9px] capitalize transition-colors border ${
+                          stickerQuery === tag
+                            ? 'bg-primary text-white border-primary'
+                            : 'bg-white/8 text-white/55 border-white/10 hover:bg-white/15 hover:text-white'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Results */}
@@ -583,31 +664,59 @@ export default function ResultView() {
             )}
           </div>
 
-          {/* Placed stickers list — with remove button */}
+          {/* Placed stickers — tap to select, then scale/remove */}
           {stickers.length > 0 && (
-            <div className="bg-white/5 rounded-2xl border border-white/10 p-3">
-              <p className="text-[10px] text-white/40 font-semibold tracking-wider uppercase mb-2">Placed stickers</p>
-              <div className="flex flex-wrap gap-2">
-                {stickers.map((s, i) => {
+            <div className="bg-white/5 rounded-2xl border border-white/10 p-3 space-y-2">
+              <p className="text-[10px] text-white/40 font-semibold tracking-wider uppercase">Placed stickers</p>
+              <div className="space-y-1.5">
+                {stickers.map((s) => {
                   const isUrl = s.emoji.startsWith('http')
+                  const isSelected = selectedSticker === s.id
                   return (
-                    <div key={s.id} className="relative group">
+                    <div
+                      key={s.id}
+                      className={`flex items-center gap-2 p-1.5 rounded-xl border transition-all ${isSelected ? 'border-primary/50 bg-primary/10' : 'border-white/10 hover:border-white/20'}`}
+                    >
+                      {/* Thumbnail */}
                       <button
                         onClick={() => setSelectedSticker(s.id === selectedSticker ? null : s.id)}
-                        className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all ${selectedSticker === s.id ? 'border-primary ring-2 ring-primary/30' : 'border-white/20 hover:border-white/40'}`}
+                        className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0 bg-white/5 flex items-center justify-center"
                       >
                         {isUrl ? (
-                          <img src={s.emoji} alt="" className="w-full h-full object-contain bg-white/5" />
+                          <img src={s.emoji} alt="" className="w-full h-full object-contain" />
                         ) : (
-                          <span className="text-xl flex items-center justify-center h-full">{s.emoji}</span>
+                          <span className="text-lg">{s.emoji}</span>
                         )}
                       </button>
-                      {/* Remove button */}
+
+                      {/* Scale slider */}
+                      <div className="flex items-center gap-1.5 flex-1">
+                        <span className="text-[9px] text-white/40 w-3">S</span>
+                        <input
+                          type="range"
+                          min="30"
+                          max="300"
+                          step="5"
+                          value={Math.round(s.scale * 100)}
+                          onChange={e => {
+                            const next = parseInt(e.target.value) / 100
+                            scaleSticker(s.id, next - s.scale)
+                          }}
+                          className="flex-1 h-1 appearance-none rounded-full cursor-pointer"
+                          style={{
+                            background: `linear-gradient(to right, oklch(0.65 0.22 350) ${((s.scale - 0.3) / 2.7) * 100}%, rgba(255,255,255,0.12) ${((s.scale - 0.3) / 2.7) * 100}%)`,
+                            WebkitAppearance: 'none',
+                          }}
+                        />
+                        <span className="text-[9px] text-white/40 w-5 text-right">{Math.round(s.scale * 100)}%</span>
+                      </div>
+
+                      {/* Remove */}
                       <button
                         onClick={() => removeSticker(s.id)}
-                        className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="w-6 h-6 rounded-md bg-red-500/20 hover:bg-red-500/40 flex items-center justify-center flex-shrink-0 transition-colors"
                       >
-                        <X className="w-2.5 h-2.5 text-white" />
+                        <X className="w-3 h-3 text-red-400" />
                       </button>
                     </div>
                   )
@@ -676,14 +785,28 @@ export default function ResultView() {
                         brushSize === i ? 'bg-primary/25 ring-2 ring-primary/80' : 'hover:bg-white/10'
                       }`}
                     >
-                      <div
-                        className="rounded-full"
-                        style={{
-                          width: Math.min(6 + i * 5, 28),
-                          height: Math.min(6 + i * 5, 28),
-                          backgroundColor: tool === 'erase' ? 'rgba(255,255,255,0.5)' : (brushSize === i ? color : 'rgba(255,255,255,0.35)'),
-                        }}
-                      />
+                      {tool === 'erase' ? (
+                        /* Eraser icon — pink rounded rectangle like a real eraser */
+                        <div
+                          className="rounded-sm border border-white/30 flex items-end overflow-hidden"
+                          style={{
+                            width: Math.min(8 + i * 5, 28),
+                            height: Math.min(5 + i * 3, 18),
+                            background: 'linear-gradient(to bottom, #ffb3c6, #ff85a1)',
+                          }}
+                        >
+                          <div style={{ height: '35%', width: '100%', background: 'rgba(255,255,255,0.3)' }} />
+                        </div>
+                      ) : (
+                        <div
+                          className="rounded-full"
+                          style={{
+                            width: Math.min(6 + i * 5, 28),
+                            height: Math.min(6 + i * 5, 28),
+                            backgroundColor: brushSize === i ? color : 'rgba(255,255,255,0.35)',
+                          }}
+                        />
+                      )}
                     </button>
                   ))}
                 </div>
@@ -692,7 +815,16 @@ export default function ResultView() {
 
             {/* Clear drawings */}
             <button
-              onClick={() => { setStrokes([]); socket.emit('strip-clear-drawing') }}
+              onClick={() => {
+                setStrokes([])
+                // Clear overlay canvas
+                if (overlayCanvasRef.current) {
+                  const octx = overlayCanvasRef.current.getContext('2d')!
+                  octx.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height)
+                  composite()
+                }
+                socket.emit('strip-clear-drawing')
+              }}
               className="flex items-center justify-center gap-2 py-2 rounded-xl bg-white/8 hover:bg-red-500/20 text-white/55 hover:text-red-400 text-xs transition-colors border border-white/8 hover:border-red-500/20"
             >
               <Trash2 className="w-3.5 h-3.5" /> Clear all drawings
@@ -706,8 +838,65 @@ export default function ResultView() {
           <div
             ref={containerRef}
             className="relative w-full max-w-sm lg:max-w-xs xl:max-w-sm select-none mx-auto"
-            style={{ cursor: tool === 'draw' || tool === 'erase' ? 'crosshair' : 'default' }}
+            style={{ cursor: tool === 'erase' ? 'none' : tool === 'draw' ? 'crosshair' : 'default' }}
+            onMouseMove={e => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              const rx = (e.clientX - rect.left) / rect.width
+              const ry = (e.clientY - rect.top) / rect.height
+              socket.emit('result-cursor', { x: rx, y: ry, username })
+              if (tool === 'erase') setEraserPos({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+            }}
+            onMouseLeave={() => {
+              setEraserPos(null)
+              socket.emit('result-cursor', { x: -1, y: -1, username })
+            }}
           >
+            {/* Eraser cursor overlay */}
+            {tool === 'erase' && eraserPos && (() => {
+              const containerEl = containerRef.current
+              const canvasEl = drawCanvasRef.current
+              if (!containerEl || !canvasEl) return null
+              const containerW = containerEl.getBoundingClientRect().width
+              const scale = containerW / canvasEl.width
+              const r = (DRAW_SIZES[brushSize] * scale) * 2
+              return (
+                <div
+                  className="pointer-events-none absolute z-50"
+                  style={{
+                    left: eraserPos.x,
+                    top:  eraserPos.y,
+                    transform: 'translate(-50%, -50%)',
+                    width:  r,
+                    height: r,
+                    borderRadius: '50%',
+                    border: '2px solid rgba(255,180,200,0.9)',
+                    background: 'rgba(255,200,220,0.15)',
+                    backdropFilter: 'blur(1px)',
+                    boxShadow: '0 0 0 1px rgba(0,0,0,0.3), inset 0 0 6px rgba(255,150,180,0.2)',
+                  }}
+                />
+              )
+            })()}
+
+            {/* Partner cursor on strip */}
+            {partnerCursor && (
+              <div
+                className="absolute pointer-events-none z-50"
+                style={{
+                  left: `${partnerCursor.x * 100}%`,
+                  top:  `${partnerCursor.y * 100}%`,
+                  transform: 'translate(-4px, -4px)',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                  <path d="M4 2L16 9L10 11L7 17L4 2Z" fill="oklch(0.65 0.22 350)" stroke="white" strokeWidth="1.2"/>
+                </svg>
+                <div className="absolute top-3 left-2.5 px-1.5 py-0.5 rounded-md bg-primary text-white text-[9px] font-semibold whitespace-nowrap shadow-md">
+                  {partnerCursor.name}
+                </div>
+              </div>
+            )}
+
             {/* Outer frame */}
             <div className="rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10 bg-black">
               <canvas
@@ -735,12 +924,37 @@ export default function ResultView() {
                     transform: `translate(-50%, -50%) scale(${s.scale})`,
                     touchAction: 'none',
                     cursor: draggingSticker === s.id ? 'grabbing' : 'grab',
-                    zIndex: 10,
+                    zIndex: isSelected ? 20 : 10,
                   }}
                   onPointerDown={e => onStickerPointerDown(e, s.id)}
                   onPointerMove={e => onStickerPointerMove(e, s.id)}
                   onPointerUp={onStickerPointerUp}
+                  onTouchStart={e => {
+                    // Pinch-to-scale — touch only, not desktop
+                    if (e.touches.length === 2 && 'ontouchstart' in window) {
+                      e.preventDefault()
+                      const dx = e.touches[0].clientX - e.touches[1].clientX
+                      const dy = e.touches[0].clientY - e.touches[1].clientY
+                      pinchRef.current = { dist: Math.hypot(dx, dy), scale: s.scale }
+                    }
+                  }}
+                  onTouchMove={e => {
+                    if (e.touches.length === 2 && pinchRef.current && 'ontouchstart' in window) {
+                      e.preventDefault()
+                      const dx = e.touches[0].clientX - e.touches[1].clientX
+                      const dy = e.touches[0].clientY - e.touches[1].clientY
+                      const dist = Math.hypot(dx, dy)
+                      const ratio = dist / pinchRef.current.dist
+                      const next = Math.max(0.3, Math.min(3, pinchRef.current.scale * ratio))
+                      scaleSticker(s.id, next - s.scale)
+                    }
+                  }}
+                  onTouchEnd={() => { pinchRef.current = null }}
                 >
+                  {/* Scale ring when selected */}
+                  {isSelected && (
+                    <div className="absolute inset-0 rounded-full ring-2 ring-primary ring-offset-1 ring-offset-transparent pointer-events-none" style={{ margin: -6 }} />
+                  )}
                   {isUrl ? (
                     <img src={s.emoji} alt="sticker" className="w-14 h-14 object-contain pointer-events-none drop-shadow-lg" draggable={false} />
                   ) : (
